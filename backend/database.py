@@ -122,6 +122,25 @@ class RechargeOrder(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
+class UsageDaily(Base):
+    """用户每日用量（对话 / 生图），用于免费额度与 VIP 差异。"""
+
+    __tablename__ = "usage_daily"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    day = Column(String(10), nullable=False, index=True)  # YYYY-MM-DD UTC
+    chat_count = Column(Integer, nullable=False, default=0)
+    image_count = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (Index("ix_usage_daily_user_day", "user_id", "day", unique=True),)
+
+
 class HotTopic(Base):
     __tablename__ = "hot_topics"
 

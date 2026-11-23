@@ -17,9 +17,27 @@ VIP_FEATURE_LABELS = {
 }
 
 VIP_PACKAGES = [
-    {"id": "vip_month", "name": "月度 VIP", "days": 30, "price": 9.9, "desc": "解锁视频+PPT，30天"},
-    {"id": "vip_quarter", "name": "季度 VIP", "days": 90, "price": 25.0, "desc": "解锁视频+PPT，90天"},
-    {"id": "vip_year", "name": "年度 VIP", "days": 365, "price": 88.0, "desc": "解锁视频+PPT，365天"},
+    {
+        "id": "vip_month",
+        "name": "月度 VIP",
+        "days": 30,
+        "price": 9.9,
+        "desc": "高额度对话/生图 + 视频 + PPT，30天",
+    },
+    {
+        "id": "vip_quarter",
+        "name": "季度 VIP",
+        "days": 90,
+        "price": 25.0,
+        "desc": "高额度对话/生图 + 视频 + PPT，90天 · 更省",
+    },
+    {
+        "id": "vip_year",
+        "name": "年度 VIP",
+        "days": 365,
+        "price": 88.0,
+        "desc": "全年畅用 · 视频 + PPT + 高额度，最划算",
+    },
 ]
 
 

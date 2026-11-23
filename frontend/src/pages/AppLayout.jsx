@@ -4,7 +4,6 @@ import { getSession } from "../api";
 export default function AppLayout() {
   const user = getSession();
   const navigate = useNavigate();
-  // 登录账号用 username；昵称仅作展示名。两者不同时都显示，避免对不上。
   const username = user?.username || "用户";
   const nickname = (user?.nickname || "").trim();
   const displayName = nickname || username;
@@ -36,9 +35,6 @@ export default function AppLayout() {
           >
             网页版对话记录
           </NavLink>
-          <span className="nav-item nav-sub" style={{ opacity: 0.5 }}>
-            APP 对话记录
-          </span>
         </nav>
         <NavLink
           to="/profile"

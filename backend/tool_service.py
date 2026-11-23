@@ -11,6 +11,7 @@ from media_service import (
     resolve_media_prompt,
 )
 from ppt_service import format_pptx_answer, generate_pptx_file
+from quota_service import QuotaExceededError, require_and_consume
 from vip_service import (
     VIP_FEATURE_PPT,
     VIP_FEATURE_VIDEO,
@@ -37,6 +38,7 @@ def run_tool(db: Session, tool_id: int, user_id: int, user_input: str) -> dict:
 
     if tool.name in DRAWING_TOOLS or "画" in tool.name:
         prompt = resolve_media_prompt(text, [], "image")
+        require_and_consume(db, user, "image")
         try:
             url = generate_image(prompt)
             result = format_image_answer(url, prompt)
@@ -64,6 +66,7 @@ def run_tool(db: Session, tool_id: int, user_id: int, user_input: str) -> dict:
             "media_type": "pptx",
         }
 
+    require_and_consume(db, user, "chat")
     system = tool.system_prompt or (
         f"你是「{tool.name}」助手。{tool.description} 用结构化中文输出，简洁实用。"
     )
@@ -89,6 +92,7 @@ def run_media(db: Session, user_id: int, media_type: str, prompt: str) -> dict:
             "media_url": url,
             "output": format_video_answer(url, p),
         }
+    require_and_consume(db, user, "image")
     url = generate_image(p)
     return {
         "media_type": "image",

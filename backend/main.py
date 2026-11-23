@@ -31,6 +31,7 @@ from payment_service import (
     build_page_pay_url,
     verify_alipay_callback,
 )
+from quota_service import QuotaExceededError, usage_summary
 from vip_service import (
     VIP_FEATURE_LABELS,
     VIP_PACKAGES,
@@ -222,8 +223,15 @@ def get_profile(user_id: int, db: Session = Depends(get_db)):
             "conversation_count": conv_count,
             "message_count": msg_count,
             **vip_status(user),
+            "usage": usage_summary(db, user),
         },
     }
+
+
+@app.get("/api/users/{user_id}/usage")
+def get_usage(user_id: int, db: Session = Depends(get_db)):
+    user = _user_or_404(db, user_id)
+    return {"code": 200, "data": usage_summary(db, user)}
 
 
 @app.post("/api/users/profile/update")
@@ -332,6 +340,8 @@ def get_tool(tool_id: int, db: Session = Depends(get_db)):
 def invoke_tool(tool_id: int, req: ToolInvokeReq, db: Session = Depends(get_db)):
     try:
         data = run_tool(db, tool_id, req.user_id, req.input)
+    except QuotaExceededError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
     except VipRequiredError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
     except MediaError as e:
@@ -348,6 +358,8 @@ def media_generate(req: MediaGenerateReq, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="media_type 只能是 image 或 video")
     try:
         data = run_media(db, req.user_id, req.media_type, req.prompt)
+    except QuotaExceededError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
     except VipRequiredError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
     except MediaError as e:

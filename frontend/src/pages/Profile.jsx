@@ -60,7 +60,6 @@ export default function Profile() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
 
-    // 切回本页 / 另一标签改了登录态时，重新拉资料（避免 VIP 不更新、账号显示错乱）
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         refresh().catch(() => {});
@@ -179,6 +178,7 @@ export default function Profile() {
   }
 
   const display = profile?.nickname || profile?.username || "用户";
+  const usage = profile?.usage;
 
   return (
     <div className="page-scroll profile-page">
@@ -193,7 +193,7 @@ export default function Profile() {
           <p className="profile-desc">
             {profile?.is_vip
               ? `VIP 有效至 ${profile.vip_expire_at ? profile.vip_expire_at.slice(0, 10) : "长期"}`
-              : "普通用户 · 视频与 PPT 需开通 VIP"}
+              : "普通用户 · 免费有日额度，视频/PPT 与高额度需开通 VIP"}
           </p>
           {profile?.is_admin ? (
             <Link to="/admin" className="btn-primary" style={{ display: "inline-block", marginTop: 8 }}>
@@ -218,10 +218,64 @@ export default function Profile() {
         </div>
       </div>
 
+      {usage ? (
+        <div className="card profile-form" style={{ marginBottom: 16 }}>
+          <h2 className="panel-title">今日用量</h2>
+          <p className="profile-desc" style={{ marginBottom: 12 }}>
+            免费用户每日有额度上限；用完可开通 VIP 继续畅用。
+          </p>
+          <div className="usage-grid">
+            {[usage.chat, usage.image].filter(Boolean).map((u) => (
+              <div key={u.feature} className="usage-item">
+                <div className="usage-item-head">
+                  <strong>{u.label}</strong>
+                  <span>{u.unlimited ? "不限" : `${u.used} / ${u.limit}`}</span>
+                </div>
+                <div className="usage-bar">
+                  <div
+                    className="usage-bar-fill"
+                    style={{
+                      width: u.unlimited
+                        ? "8%"
+                        : `${Math.min(100, Math.round((u.used / Math.max(1, u.limit)) * 100))}%`,
+                    }}
+                  />
+                </div>
+                {!u.unlimited && u.remain === 0 ? (
+                  <p className="usage-warn">今日已用完 · 开通 VIP 提升额度</p>
+                ) : (
+                  <p className="profile-desc" style={{ margin: "6px 0 0" }}>
+                    {u.unlimited ? "VIP 高额度" : `剩余 ${u.remain} 次`}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="benefit-compare">
+            <div className="benefit-col">
+              <h3>免费用户</h3>
+              <ul>
+                {(usage.benefits?.free || []).map((txt) => (
+                  <li key={txt}>{txt}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="benefit-col benefit-vip">
+              <h3>VIP 会员</h3>
+              <ul>
+                {(usage.benefits?.vip || []).map((txt) => (
+                  <li key={txt}>{txt}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="card profile-form" style={{ marginBottom: 16 }}>
         <h2 className="panel-title">开通 VIP（支付宝充值）</h2>
         <p className="profile-desc" style={{ marginBottom: 12 }}>
-          VIP 专属：AI 视频生成、PPT 可下载文稿。点击后跳转支付宝，支付成功才开通。
+          VIP：更高对话/生图额度，解锁 AI 视频与 PPT 下载。支付成功后自动开通。
           {!payReady && (
             <span style={{ color: "#c0392b", display: "block", marginTop: 6 }}>
               当前未配置支付宝商户参数，无法在线支付。请在 backend/.env 填写 ALIPAY_APP_ID 等；期间可由管理员后台开通。

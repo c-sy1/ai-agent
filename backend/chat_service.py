@@ -19,6 +19,7 @@ from media_service import (
     generate_video,
     resolve_media_prompt,
 )
+from quota_service import QuotaExceededError, require_and_consume
 from vip_service import VIP_FEATURE_VIDEO, VipRequiredError, require_vip
 
 PM_INTERVIEW_REPLY = """产品经理面试通常涵盖以下六大模块，建议逐条准备：
@@ -186,19 +187,25 @@ def chat_in_conversation(
     db.commit()
 
     media_type = detect_media_intent(question, history)
+    user = db.get(User, user_id)
 
     answer = None
     if media_type:
         prompt = resolve_media_prompt(question, history, media_type)
         try:
             if media_type == "video":
-                user = db.get(User, user_id)
                 require_vip(user, VIP_FEATURE_VIDEO)
                 url = generate_video(prompt)
                 answer = format_video_answer(url, prompt)
             else:
+                require_and_consume(db, user, "image")
                 url = generate_image(prompt)
                 answer = format_image_answer(url, prompt)
+        except QuotaExceededError as e:
+            answer = (
+                f"🔒 {e}\n\n"
+                "开通入口：左下角进入「个人主页」选择套餐充值。"
+            )
         except VipRequiredError as e:
             answer = (
                 f"🔒 {e}\n\n"
@@ -227,9 +234,17 @@ def chat_in_conversation(
             answer += text_part or _demo_reply(question, agent)
 
     if answer is None:
-        answer = _unwrap_llm(_llm_reply(question, history, system_prompt), question)
-        if answer is None:
-            answer = _demo_reply(question, agent)
+        try:
+            require_and_consume(db, user, "chat")
+        except QuotaExceededError as e:
+            answer = (
+                f"🔒 {e}\n\n"
+                "开通入口：左下角进入「个人主页」选择套餐充值，解锁更高对话额度。"
+            )
+        else:
+            answer = _unwrap_llm(_llm_reply(question, history, system_prompt), question)
+            if answer is None:
+                answer = _demo_reply(question, agent)
 
     db.add(
         ChatMessage(
