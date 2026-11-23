@@ -1,14 +1,20 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { getSession } from "../api";
 
 export default function AppLayout() {
   const user = getSession();
   const navigate = useNavigate();
+  const location = useLocation();
   const username = user?.username || "用户";
   const nickname = (user?.nickname || "").trim();
   const displayName = nickname || username;
   const showLoginName = Boolean(nickname && nickname !== username);
   const isAdmin = Boolean(user?.is_admin);
+
+  const toolboxQ = new URLSearchParams(location.search).get("q") || "";
+  const onPhotoRepair =
+    location.pathname === "/toolbox" && /照片|修复/.test(toolboxQ);
+  const onToolbox = location.pathname === "/toolbox" && !onPhotoRepair;
 
   const newChat = () => navigate("/chat");
 
@@ -27,7 +33,10 @@ export default function AppLayout() {
           <NavLink to="/" end className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
             🏠 首页
           </NavLink>
-          <NavLink to="/toolbox" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+          <NavLink
+            to="/toolbox"
+            className={() => `nav-item${onToolbox ? " active" : ""}`}
+          >
             🧰 工具箱
           </NavLink>
           <NavLink to="/agents" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
@@ -43,7 +52,7 @@ export default function AppLayout() {
           </NavLink>
           <NavLink
             to="/toolbox?q=照片"
-            className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+            className={() => `nav-item${onPhotoRepair ? " active" : ""}`}
           >
             ✨ 照片修复
           </NavLink>
