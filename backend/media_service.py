@@ -54,8 +54,8 @@ def _modelscope_api_key() -> str:
     raise MediaError("未配置可用密钥：请在 backend/.env 设置 MODELSCOPE_API_KEY（魔搭 ms-...）")
 
 
-def _dashscope_api_key() -> str:
-    """可选：通义万相视频/图片兜底，仅接受非 ms- 的 Key。"""
+def _dashscope_api_key(purpose: str = "通义万相") -> str:
+    """通义万相（修图/收费视频等），仅接受非 ms- 的 Key。"""
     _reload_env()
     primary = (os.getenv("DASHSCOPE_API_KEY") or "").strip()
     fallback = (os.getenv("QIANWEN_API_KEY") or "").strip()
@@ -63,8 +63,9 @@ def _dashscope_api_key() -> str:
         if key and not key.startswith("ms-"):
             return key
     raise MediaError(
-        "视频仍需阿里云 DashScope Key（sk-...）。"
-        "当前图片已可用魔搭生成；若要真实视频，请配置 DASHSCOPE_API_KEY。"
+        f"{purpose}需要阿里云百炼 DashScope Key（sk-...），"
+        "魔搭 ms- Key 不能用于此项。"
+        "请在 backend/.env 配置 DASHSCOPE_API_KEY。"
     )
 
 
@@ -579,12 +580,9 @@ def edit_image(prompt: str, image_base64: str) -> str:
 
     data_url = _prepare_edit_data_url(image_base64)
     try:
-        key = _dashscope_api_key()
-    except MediaError as e:
-        raise MediaError(
-            f"{e} 真修图必须使用阿里云百炼/通义万相 Key（sk-...），"
-            "请在 backend/.env 配置 DASHSCOPE_API_KEY。"
-        ) from e
+        _dashscope_api_key(purpose="照片真修图（通义万相图像编辑）")
+    except MediaError:
+        raise
 
     model = (os.getenv("DASHSCOPE_IMAGE_EDIT_MODEL") or "wanx2.1-imageedit").strip()
     with httpx.Client(timeout=60.0) as client:
