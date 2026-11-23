@@ -4,9 +4,11 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
     func,
 )
@@ -138,7 +140,10 @@ class UsageDaily(Base):
     chat_count = Column(Integer, nullable=False, default=0)
     image_count = Column(Integer, nullable=False, default=0)
 
-    __table_args__ = (Index("ix_usage_daily_user_day", "user_id", "day", unique=True),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "day", name="uq_usage_daily_user_day"),
+        Index("ix_usage_daily_user_day", "user_id", "day"),
+    )
 
 
 class HotTopic(Base):
