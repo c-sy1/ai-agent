@@ -20,7 +20,9 @@ from media_service import (
     resolve_media_prompt,
 )
 from quota_service import QuotaExceededError, require_and_consume
+from search_service import fetch_search, is_search_question
 from vip_service import VIP_FEATURE_VIDEO, VipRequiredError, require_vip
+from weather_service import fetch_weather, is_weather_question
 
 PM_INTERVIEW_REPLY = """产品经理面试通常涵盖以下六大模块，建议逐条准备：
 
@@ -204,7 +206,29 @@ def chat_in_conversation(
     user = db.get(User, user_id)
 
     answer = None
-    if media_type:
+    # 实时能力：天气 / 简易联网检索（免费无需 Key）
+    if answer is None and is_weather_question(question):
+        try:
+            require_and_consume(db, user, "chat")
+            answer = fetch_weather(question)
+        except QuotaExceededError as e:
+            answer = (
+                f"🔒 {e}\n\n"
+                "开通入口：左下角进入「个人主页」选择套餐充值。"
+            )
+    if answer is None and is_search_question(question):
+        try:
+            require_and_consume(db, user, "chat")
+            answer = fetch_search(question) or (
+                "联网检索暂时没有可用结果，请换个问法再试。"
+            )
+        except QuotaExceededError as e:
+            answer = (
+                f"🔒 {e}\n\n"
+                "开通入口：左下角进入「个人主页」选择套餐充值。"
+            )
+
+    if answer is None and media_type:
         prompt = resolve_media_prompt(question, history, media_type)
         try:
             if media_type == "video":
