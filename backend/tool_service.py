@@ -38,6 +38,7 @@ def run_tool(
     user_id: int,
     user_input: str,
     image_base64: str | None = None,
+    mask_base64: str | None = None,
 ) -> dict:
     user = db.get(User, user_id)
     if user is None:
@@ -58,12 +59,13 @@ def run_tool(
         upload_url = save_upload_image(image_base64)
         require_and_consume(db, user, "image")
         try:
-            # 真修图：通义万相基于原图指令编辑（非文生图）
-            out_url = edit_image(text, image_base64)
+            # 真修图：有涂抹蒙版则局部重绘（去路人），否则整图指令编辑
+            out_url = edit_image(text, image_base64, mask_base64)
         except MediaError:
             raise
+        mode = "局部重绘（已涂抹区域）" if (mask_base64 or "").strip() else "整图指令编辑"
         output = (
-            "已基于你上传的**原图**完成修图（通义万相图像编辑）。\n\n"
+            f"已基于你上传的**原图**完成修图（通义万相 · {mode}）。\n\n"
             f"修复需求：{text}\n\n"
             f"原图：{upload_url}\n\n"
             f"{format_image_answer(out_url, text)}"

@@ -534,18 +534,8 @@ def save_upload_image(image_base64: str) -> str:
     return _public_path("uploads", name)
 
 
-def _prepare_edit_data_url(image_base64: str) -> str:
-    """规范为万相编辑可用的 JPEG dataURL（边长约 512～2048）。"""
-    from io import BytesIO
-
+def _resize_for_edit(img):
     from PIL import Image
-
-    data, _mime = _decode_image_bytes(image_base64)
-    try:
-        img = Image.open(BytesIO(data))
-        img = img.convert("RGB")
-    except Exception as e:
-        raise MediaError("无法读取上传图片，请换 jpg/png") from e
 
     w, h = img.size
     long_side = max(w, h)
@@ -556,46 +546,99 @@ def _prepare_edit_data_url(image_base64: str) -> str:
     if min(w, h) < 512:
         scale = 512 / float(min(w, h))
         img = img.resize((max(512, int(w * scale)), max(512, int(h * scale))), Image.Resampling.LANCZOS)
+    return img
 
+
+def _prepare_edit_image(image_base64: str):
+    """返回 (data_url, (w,h))，JPEG RGB。"""
+    from io import BytesIO
+
+    from PIL import Image
+
+    data, _mime = _decode_image_bytes(image_base64)
+    try:
+        img = Image.open(BytesIO(data)).convert("RGB")
+    except Exception as e:
+        raise MediaError("无法读取上传图片，请换 jpg/png") from e
+    img = _resize_for_edit(img)
     buf = BytesIO()
     img.save(buf, format="JPEG", quality=90)
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-    return f"data:image/jpeg;base64,{b64}"
+    return f"data:image/jpeg;base64,{b64}", img.size
 
 
-def edit_image(prompt: str, image_base64: str) -> str:
+def _prepare_mask_data_url(mask_base64: str, size: tuple[int, int]) -> str:
+    """蒙版缩放到与原图一致：白色=要修改，黑色=保留。"""
+    from io import BytesIO
+
+    from PIL import Image, ImageOps
+
+    data, _mime = _decode_image_bytes(mask_base64)
+    try:
+        mask = Image.open(BytesIO(data)).convert("L")
+    except Exception as e:
+        raise MediaError("无法读取涂抹蒙版") from e
+    mask = mask.resize(size, Image.Resampling.NEAREST)
+    # 二值化：偏亮视为要编辑区域
+    mask = mask.point(lambda p: 255 if p > 40 else 0)
+    # 若几乎全黑，说明用户没涂抹
+    if mask.getextrema()[1] < 128:
+        raise MediaError("请先在图上涂抹要去掉/修改的区域（红色笔刷）")
+    rgb = ImageOps.colorize(mask, black=(0, 0, 0), white=(255, 255, 255))
+    buf = BytesIO()
+    rgb.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{b64}"
+
+
+def edit_image(
+    prompt: str,
+    image_base64: str,
+    mask_base64: str | None = None,
+) -> str:
     """
-    真修图：通义万相 wanx2.1-imageedit 指令编辑（基于原图）。
-    需要 DASHSCOPE_API_KEY（sk-...），会按量计费。
+    真修图：通义万相 wanx2.1-imageedit。
+    - 有蒙版：局部重绘 description_edit_with_mask（去路人等）
+    - 无蒙版：整图指令编辑 description_edit
     """
     text = (prompt or "").strip()
     if not text:
         raise MediaError("请填写修复需求，例如：去掉前方路人、提亮人脸")
-    # 把口语需求写清楚，提升去路人/修复成功率
+
+    need_mask = any(k in text for k in ("去掉", "删除", "消除", "去除", "路人", "擦除", "移除"))
+    if need_mask and not (mask_base64 or "").strip():
+        raise MediaError(
+            "去掉路人/物体请先在图上用笔刷涂抹要修改的区域，再点生成。"
+            "只写文字、不涂抹时模型经常几乎不改图。"
+        )
+
     edit_prompt = (
         f"{text}。"
-        "请在原图基础上修改，保持主体人物、构图、光线和整体风格一致，"
-        "修复痕迹自然，不要换成另一张无关照片。"
+        "在指定区域内自然修复，用周围背景填补，"
+        "保持未涂抹区域（尤其主体人物）完全不变，痕迹自然。"
     )[:800]
 
-    data_url = _prepare_edit_data_url(image_base64)
-    try:
-        _dashscope_api_key(purpose="照片真修图（通义万相图像编辑）")
-    except MediaError:
-        raise
+    data_url, size = _prepare_edit_image(image_base64)
+    _dashscope_api_key(purpose="照片真修图（通义万相图像编辑）")
 
     model = (os.getenv("DASHSCOPE_IMAGE_EDIT_MODEL") or "wanx2.1-imageedit").strip()
+    input_obj: dict = {
+        "prompt": edit_prompt,
+        "base_image_url": data_url,
+    }
+    if (mask_base64 or "").strip():
+        input_obj["function"] = "description_edit_with_mask"
+        input_obj["mask_image_url"] = _prepare_mask_data_url(mask_base64, size)
+    else:
+        input_obj["function"] = "description_edit"
+
     with httpx.Client(timeout=60.0) as client:
         resp = client.post(
             f"{DASHSCOPE_BASE}/services/aigc/image2image/image-synthesis",
             headers=_dashscope_headers(async_mode=True),
             json={
                 "model": model,
-                "input": {
-                    "function": "description_edit",
-                    "prompt": edit_prompt,
-                    "base_image_url": data_url,
-                },
+                "input": input_obj,
                 "parameters": {"n": 1},
             },
         )

@@ -1247,3 +1247,42 @@ a.user-bar-link.active {
     grid-template-columns: 1fr;
   }
 }
+
+.mask-stage {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  margin-top: 8px;
+  line-height: 0;
+  user-select: none;
+  touch-action: none;
+}
+
+.mask-stage .tool-upload-preview {
+  margin-top: 0;
+}
+
+.mask-canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  opacity: 0.45;
+}
+
+.mask-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: #636e72;
+}
+
+.mask-toolbar input[type="range"] {
+  vertical-align: middle;
+  margin-left: 8px;
+}

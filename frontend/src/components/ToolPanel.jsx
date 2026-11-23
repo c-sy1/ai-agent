@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, getSession, resolveAssetUrl } from "../api";
 import RichContent from "./RichContent";
 
@@ -15,9 +15,14 @@ export default function ToolPanel({ tool, onClose }) {
   const [mediaUrl, setMediaUrl] = useState("");
   const [preview, setPreview] = useState("");
   const [imageBase64, setImageBase64] = useState("");
+  const [maskBase64, setMaskBase64] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [brush, setBrush] = useState(28);
   const photoRequired = needsPhoto(tool);
+  const imgRef = useRef(null);
+  const canvasRef = useRef(null);
+  const drawing = useRef(false);
 
   useEffect(() => {
     setInput("");
@@ -27,10 +32,74 @@ export default function ToolPanel({ tool, onClose }) {
     setMediaUrl("");
     setPreview("");
     setImageBase64("");
+    setMaskBase64("");
     setError("");
   }, [tool?.id]);
 
+  const syncCanvasSize = () => {
+    const img = imgRef.current;
+    const canvas = canvasRef.current;
+    if (!img || !canvas) return;
+    const w = img.clientWidth || img.naturalWidth;
+    const h = img.clientHeight || img.naturalHeight;
+    if (!w || !h) return;
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, w, h);
+    }
+  };
+
+  useEffect(() => {
+    if (!preview) return;
+    const t = setTimeout(syncCanvasSize, 50);
+    window.addEventListener("resize", syncCanvasSize);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("resize", syncCanvasSize);
+    };
+  }, [preview]);
+
   if (!tool) return null;
+
+  const paintAt = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * canvas.width;
+    const y = ((e.clientY - rect.top) / rect.height) * canvas.height;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(x, y, brush, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  const onPointerDown = (e) => {
+    drawing.current = true;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    paintAt(e);
+  };
+  const onPointerMove = (e) => {
+    if (!drawing.current) return;
+    paintAt(e);
+  };
+  const onPointerUp = () => {
+    drawing.current = false;
+    const canvas = canvasRef.current;
+    if (canvas) setMaskBase64(canvas.toDataURL("image/png"));
+  };
+
+  const clearMask = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    setMaskBase64("");
+  };
 
   const onPickFile = (e) => {
     const file = e.target.files?.[0];
@@ -48,6 +117,7 @@ export default function ToolPanel({ tool, onClose }) {
       const dataUrl = String(reader.result || "");
       setImageBase64(dataUrl);
       setPreview(dataUrl);
+      setMaskBase64("");
       setError("");
     };
     reader.onerror = () => setError("读取图片失败");
@@ -64,6 +134,16 @@ export default function ToolPanel({ tool, onClose }) {
       setError("请先上传照片");
       return;
     }
+    const needMask = /去掉|删除|消除|去除|路人|擦除|移除/.test(input || "");
+    let mask = maskBase64;
+    if (photoRequired && needMask) {
+      const canvas = canvasRef.current;
+      if (canvas) mask = canvas.toDataURL("image/png");
+      if (!mask) {
+        setError("去掉路人请先在图上涂抹要改的区域（白色笔刷）");
+        return;
+      }
+    }
     setLoading(true);
     setError("");
     setFileUrl("");
@@ -74,6 +154,7 @@ export default function ToolPanel({ tool, onClose }) {
         user_id: user.user_id,
         input,
         image_base64: photoRequired ? imageBase64 : undefined,
+        mask_base64: photoRequired ? mask || undefined : undefined,
       });
       const out = res.data.output || "";
       setOutput(out);
@@ -126,10 +207,47 @@ export default function ToolPanel({ tool, onClose }) {
             <div className="tool-upload">
               <input type="file" accept="image/*" onChange={onPickFile} />
               {preview ? (
-                <img src={preview} alt="预览" className="tool-upload-preview" />
+                <>
+                  <p className="profile-desc" style={{ margin: "8px 0" }}>
+                    去掉路人：在下方图上用笔刷涂抹要删除的区域，再点生成（只写文字往往几乎不改图）
+                  </p>
+                  <div className="mask-stage">
+                    <img
+                      ref={imgRef}
+                      src={preview}
+                      alt="预览"
+                      className="tool-upload-preview"
+                      onLoad={syncCanvasSize}
+                      draggable={false}
+                    />
+                    <canvas
+                      ref={canvasRef}
+                      className="mask-canvas"
+                      onPointerDown={onPointerDown}
+                      onPointerMove={onPointerMove}
+                      onPointerUp={onPointerUp}
+                      onPointerLeave={onPointerUp}
+                    />
+                  </div>
+                  <div className="mask-toolbar">
+                    <label>
+                      笔刷
+                      <input
+                        type="range"
+                        min={12}
+                        max={64}
+                        value={brush}
+                        onChange={(e) => setBrush(Number(e.target.value))}
+                      />
+                    </label>
+                    <button type="button" className="chip" onClick={clearMask}>
+                      清除涂抹
+                    </button>
+                  </div>
+                </>
               ) : (
                 <p className="profile-desc" style={{ margin: "8px 0 0" }}>
-                  必须上传原图；将基于这张图做真修图（非另画一张）
+                  必须上传原图；去路人请涂抹要改的区域
                 </p>
               )}
             </div>
@@ -139,10 +257,10 @@ export default function ToolPanel({ tool, onClose }) {
         <label className="tool-modal-label">{photoRequired ? "修复需求" : "输入"}</label>
         <textarea
           className="tool-modal-input"
-          rows={5}
+          rows={4}
           placeholder={
             photoRequired
-              ? "例如：去掉前方路人、提亮人脸、去除杂物，保持原图主体不变"
+              ? "例如：去掉涂抹区域中的路人和车辆，用街道背景自然填补"
               : tool.input_placeholder || "请输入你的需求…"
           }
           value={input}
@@ -151,7 +269,7 @@ export default function ToolPanel({ tool, onClose }) {
 
         <div className="tool-modal-actions">
           <button type="button" className="btn-primary" onClick={run} disabled={loading}>
-            {loading ? (photoRequired ? "原图修图中，约需 10～30 秒…" : "AI 生成中…") : "立即生成"}
+            {loading ? (photoRequired ? "局部修图中，约需 10～30 秒…" : "AI 生成中…") : "立即生成"}
           </button>
           {output && (
             <button type="button" className="chip" onClick={copy}>
