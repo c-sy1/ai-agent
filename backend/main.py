@@ -5,11 +5,23 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from auth_service import (
+    assert_self_or_admin,
+    auth_payload_for,
+    check_login_rate_limit,
+    clear_login_failures,
+    get_current_user,
+    hash_password,
+    is_hashed_password,
+    record_login_failure,
+    require_admin,
+    verify_password,
+)
 from chat_service import chat_in_conversation
 from tool_service import run_tool, run_media
 from media_service import GENERATED_ROOT, MediaError
@@ -60,9 +72,9 @@ app.mount("/generated", StaticFiles(directory=str(GENERATED_ROOT)), name="genera
 
 
 class RegisterReq(BaseModel):
-    username: str
+    username: str = Field(min_length=3, max_length=32)
     email: str
-    password: str
+    password: str = Field(min_length=6, max_length=72)
     nickname: str = ""
 
 
@@ -146,19 +158,23 @@ def _conv_item(r: Conversation) -> dict:
 
 @app.post("/api/register")
 def register(req: RegisterReq, db: Session = Depends(get_db)):
+    username = req.username.strip()
+    email = req.email.strip().lower()
+    if not username or not email:
+        raise HTTPException(status_code=400, detail="用户名和邮箱不能为空")
     exists = (
         db.query(User)
-        .filter(or_(User.username == req.username, User.email == req.email))
+        .filter(or_(User.username == username, User.email == email))
         .first()
     )
     if exists:
         raise HTTPException(status_code=400, detail="用户名或邮箱已被注册")
 
     user = User(
-        username=req.username,
-        email=req.email,
-        password=req.password,
-        nickname=req.nickname or req.username,
+        username=username,
+        email=email,
+        password=hash_password(req.password),
+        nickname=(req.nickname or username).strip()[:50],
     )
     db.add(user)
     try:
@@ -170,32 +186,38 @@ def register(req: RegisterReq, db: Session = Depends(get_db)):
     return {
         "code": 200,
         "msg": "注册成功",
-        "data": {
-            "user_id": user.id,
-            "username": user.username,
-            "nickname": user.nickname,
-            "email": user.email,
-            **vip_status(user),
-        },
+        "data": auth_payload_for(user),
     }
 
 
 @app.post("/api/login")
-def login(req: LoginReq, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == req.username).first()
-    if user is None or user.password != req.password:
+def login(req: LoginReq, request: Request, db: Session = Depends(get_db)):
+    username = (req.username or "").strip()
+    ip = request.client.host if request.client else None
+    check_login_rate_limit(username, ip)
+
+    user = db.query(User).filter(User.username == username).first()
+    if user is None or not verify_password(req.password, user.password or ""):
+        record_login_failure(username, ip)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+    # 旧明文密码登录成功后自动升级为 bcrypt
+    if not is_hashed_password(user.password or ""):
+        user.password = hash_password(req.password)
+        db.commit()
+        db.refresh(user)
+
+    clear_login_failures(username, ip)
     return {
         "code": 200,
         "msg": "登录成功",
-        "data": {
-            "user_id": user.id,
-            "username": user.username,
-            "nickname": user.nickname or user.username,
-            "email": user.email,
-            **vip_status(user),
-        },
+        "data": auth_payload_for(user),
     }
+
+
+@app.get("/api/auth/me")
+def auth_me(auth: User = Depends(get_current_user)):
+    return {"code": 200, "data": auth_payload_for(auth)}
 
 
 class ProfileUpdateReq(BaseModel):
@@ -205,7 +227,12 @@ class ProfileUpdateReq(BaseModel):
 
 
 @app.get("/api/users/{user_id}/profile")
-def get_profile(user_id: int, db: Session = Depends(get_db)):
+def get_profile(
+    user_id: int,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    assert_self_or_admin(auth, user_id)
     user = _user_or_404(db, user_id)
     conv_count = (
         db.query(Conversation).filter(Conversation.user_id == user_id).count()
@@ -231,13 +258,23 @@ def get_profile(user_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/users/{user_id}/usage")
-def get_usage(user_id: int, db: Session = Depends(get_db)):
+def get_usage(
+    user_id: int,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    assert_self_or_admin(auth, user_id)
     user = _user_or_404(db, user_id)
     return {"code": 200, "data": usage_summary(db, user)}
 
 
 @app.post("/api/users/profile/update")
-def update_profile(req: ProfileUpdateReq, db: Session = Depends(get_db)):
+def update_profile(
+    req: ProfileUpdateReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    assert_self_or_admin(auth, req.user_id)
     user = _user_or_404(db, req.user_id)
     if req.nickname is not None:
         nick = req.nickname.strip()
@@ -339,7 +376,13 @@ def get_tool(tool_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/tools/{tool_id}/invoke")
-def invoke_tool(tool_id: int, req: ToolInvokeReq, db: Session = Depends(get_db)):
+def invoke_tool(
+    tool_id: int,
+    req: ToolInvokeReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    assert_self_or_admin(auth, req.user_id)
     try:
         data = run_tool(
             db, tool_id, req.user_id, req.input, req.image_base64, req.mask_base64
@@ -356,7 +399,12 @@ def invoke_tool(tool_id: int, req: ToolInvokeReq, db: Session = Depends(get_db))
 
 
 @app.post("/api/media/generate")
-def media_generate(req: MediaGenerateReq, db: Session = Depends(get_db)):
+def media_generate(
+    req: MediaGenerateReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    assert_self_or_admin(auth, req.user_id)
     _user_or_404(db, req.user_id)
     if req.media_type not in ("image", "video"):
         raise HTTPException(status_code=400, detail="media_type 只能是 image 或 video")
@@ -408,7 +456,12 @@ def list_agents(
 
 
 @app.get("/api/conversations")
-def list_conversations(user_id: int, db: Session = Depends(get_db)):
+def list_conversations(
+    user_id: int,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    assert_self_or_admin(auth, user_id)
     _user_or_404(db, user_id)
     rows = (
         db.query(Conversation)
@@ -451,7 +504,9 @@ def update_conversation(
     conversation_id: int,
     req: ConversationUpdateReq,
     db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
 ):
+    assert_self_or_admin(auth, req.user_id)
     conv = _conv_or_404(db, conversation_id, req.user_id)
     _apply_conversation_update(conv, req)
     db.commit()
@@ -464,8 +519,9 @@ def update_conversation_post(
     conversation_id: int,
     req: ConversationUpdateReq,
     db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
 ):
-    return update_conversation(conversation_id, req, db)
+    return update_conversation(conversation_id, req, db, auth)
 
 
 @app.delete("/api/conversations/{conversation_id}")
@@ -473,7 +529,9 @@ def delete_conversation(
     conversation_id: int,
     user_id: int,
     db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
 ):
+    assert_self_or_admin(auth, user_id)
     conv = _conv_or_404(db, conversation_id, user_id)
     db.delete(conv)
     db.commit()
@@ -485,12 +543,18 @@ def delete_conversation_post(
     conversation_id: int,
     req: ConversationDeleteReq,
     db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
 ):
-    return delete_conversation(conversation_id, req.user_id, db)
+    return delete_conversation(conversation_id, req.user_id, db, auth)
 
 
 @app.post("/api/conversations")
-def create_conversation(req: ConversationCreateReq, db: Session = Depends(get_db)):
+def create_conversation(
+    req: ConversationCreateReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    assert_self_or_admin(auth, req.user_id)
     _user_or_404(db, req.user_id)
     conv = Conversation(
         user_id=req.user_id,
@@ -508,7 +572,9 @@ def conversation_messages(
     conversation_id: int,
     user_id: int,
     db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
 ):
+    assert_self_or_admin(auth, user_id)
     _user_or_404(db, user_id)
     conv = (
         db.query(Conversation)
@@ -537,7 +603,12 @@ def conversation_messages(
 
 
 @app.post("/api/chat")
-def chat(req: ChatReq, db: Session = Depends(get_db)):
+def chat(
+    req: ChatReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    assert_self_or_admin(auth, req.user_id)
     _user_or_404(db, req.user_id)
     conv_id = req.conversation_id
     if conv_id is None:
@@ -564,8 +635,13 @@ def chat(req: ChatReq, db: Session = Depends(get_db)):
 
 
 @app.get("/api/session/{user_id}/history")
-def legacy_history(user_id: int, db: Session = Depends(get_db)):
+def legacy_history(
+    user_id: int,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
     """兼容课程模版的历史接口：返回该用户最近一条会话的全部消息。"""
+    assert_self_or_admin(auth, user_id)
     _user_or_404(db, user_id)
     conv = (
         db.query(Conversation)
@@ -636,14 +712,24 @@ def vip_packages():
 
 
 @app.get("/api/vip/status")
-def get_vip_status(user_id: int, db: Session = Depends(get_db)):
+def get_vip_status(
+    user_id: int,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    assert_self_or_admin(auth, user_id)
     user = _user_or_404(db, user_id)
     return {"code": 200, "data": vip_status(user)}
 
 
 @app.post("/api/vip/recharge")
-def vip_recharge(req: RechargeReq, db: Session = Depends(get_db)):
+def vip_recharge(
+    req: RechargeReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
     """创建 VIP 订单并返回支付宝支付链接（支付成功后才开通）。"""
+    assert_self_or_admin(auth, req.user_id)
     user = _user_or_404(db, req.user_id)
     try:
         order, pay_url = create_vip_order(db, user, req.package_id)
@@ -668,7 +754,13 @@ def vip_recharge(req: RechargeReq, db: Session = Depends(get_db)):
 
 
 @app.get("/api/vip/orders/{order_id}")
-def vip_order_detail(order_id: int, user_id: int, db: Session = Depends(get_db)):
+def vip_order_detail(
+    order_id: int,
+    user_id: int,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    assert_self_or_admin(auth, user_id)
     _user_or_404(db, user_id)
     order = db.get(RechargeOrder, order_id)
     if order is None or order.user_id != user_id:
@@ -688,7 +780,13 @@ def vip_order_detail(order_id: int, user_id: int, db: Session = Depends(get_db))
 
 
 @app.post("/api/vip/orders/{order_id}/cancel")
-def vip_cancel_order(order_id: int, req: OrderActionReq, db: Session = Depends(get_db)):
+def vip_cancel_order(
+    order_id: int,
+    req: OrderActionReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    assert_self_or_admin(auth, req.user_id)
     _user_or_404(db, req.user_id)
     order = db.get(RechargeOrder, order_id)
     if order is None or order.user_id != req.user_id:
@@ -702,8 +800,14 @@ def vip_cancel_order(order_id: int, req: OrderActionReq, db: Session = Depends(g
 
 
 @app.post("/api/vip/orders/{order_id}/pay")
-def vip_continue_pay(order_id: int, req: OrderActionReq, db: Session = Depends(get_db)):
+def vip_continue_pay(
+    order_id: int,
+    req: OrderActionReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
     """待支付订单重新生成支付宝跳转链接。"""
+    assert_self_or_admin(auth, req.user_id)
     _user_or_404(db, req.user_id)
     order = db.get(RechargeOrder, order_id)
     if order is None or order.user_id != req.user_id:
@@ -761,7 +865,12 @@ def alipay_return(
 
 
 @app.get("/api/vip/orders")
-def vip_orders(user_id: int, db: Session = Depends(get_db)):
+def vip_orders(
+    user_id: int,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    assert_self_or_admin(auth, user_id)
     _user_or_404(db, user_id)
     rows = (
         db.query(RechargeOrder)
@@ -789,8 +898,12 @@ def vip_orders(user_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/admin/users")
-def admin_list_users(admin_user_id: int, db: Session = Depends(get_db)):
-    _admin_or_403(db, admin_user_id)
+def admin_list_users(
+    admin_user_id: int = 0,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin(auth)
     rows = db.query(User).order_by(User.id.desc()).limit(200).all()
     return {
         "code": 200,
@@ -808,8 +921,12 @@ def admin_list_users(admin_user_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/admin/vip/grant")
-def admin_grant_vip(req: AdminGrantVipReq, db: Session = Depends(get_db)):
-    _admin_or_403(db, req.admin_user_id)
+def admin_grant_vip(
+    req: AdminGrantVipReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin(auth)
     user = _user_or_404(db, req.user_id)
     extend_vip(user, req.days)
     db.commit()
@@ -818,8 +935,12 @@ def admin_grant_vip(req: AdminGrantVipReq, db: Session = Depends(get_db)):
 
 
 @app.post("/api/admin/vip/revoke")
-def admin_revoke_vip(req: AdminRevokeVipReq, db: Session = Depends(get_db)):
-    _admin_or_403(db, req.admin_user_id)
+def admin_revoke_vip(
+    req: AdminRevokeVipReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin(auth)
     user = _user_or_404(db, req.user_id)
     revoke_vip(user)
     db.commit()
@@ -828,8 +949,12 @@ def admin_revoke_vip(req: AdminRevokeVipReq, db: Session = Depends(get_db)):
 
 
 @app.get("/api/admin/recharges")
-def admin_recharges(admin_user_id: int, db: Session = Depends(get_db)):
-    _admin_or_403(db, admin_user_id)
+def admin_recharges(
+    admin_user_id: int = 0,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin(auth)
     rows = db.query(RechargeOrder).order_by(RechargeOrder.id.desc()).limit(100).all()
     return {
         "code": 200,

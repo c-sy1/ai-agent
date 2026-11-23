@@ -1026,6 +1026,64 @@ a.user-bar-link.active {
   font-size: 12px;
   color: var(--muted);
   text-align: center;
+  line-height: 1.5;
+}
+
+.login-security {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.login-security span {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: rgba(108, 92, 231, 0.06);
+}
+
+.pwd-strength {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pwd-strength-bar {
+  height: 4px;
+  width: 72px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  position: relative;
+  overflow: hidden;
+}
+
+.pwd-strength-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 25%;
+  background: #d63031;
+}
+
+.pwd-strength.level-2 .pwd-strength-bar::after {
+  width: 50%;
+  background: #e17055;
+}
+
+.pwd-strength.level-3 .pwd-strength-bar::after {
+  width: 75%;
+  background: #0984e3;
+}
+
+.pwd-strength.level-4 .pwd-strength-bar::after {
+  width: 100%;
+  background: #00b894;
 }
 
 .tool-modal-overlay {

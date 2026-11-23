@@ -11,3 +11,5 @@ imageio
 imageio-ffmpeg
 Pillow
 numpy
+bcrypt
+PyJWT

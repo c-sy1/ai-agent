@@ -33,7 +33,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(50), nullable=False, unique=True)
     email = Column(String(100), nullable=False, unique=True)
-    password = Column(String(50), nullable=False)
+    password = Column(String(255), nullable=False)  # bcrypt 哈希
     nickname = Column(String(50), nullable=False, default="")
     avatar = Column(String(255), nullable=False, default="")
     is_vip = Column(Integer, nullable=False, default=0)

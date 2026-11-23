@@ -35,6 +35,12 @@ export function isWrongPreviewPage() {
   return protocol === "https:" || (port !== "" && port !== "8000" && port !== "5173");
 }
 
+function authHeaders() {
+  const session = getSession();
+  const token = session?.access_token || session?.token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function request(path, options = {}) {
   const { timeoutMs = 30000, ...fetchOptions } = options;
   const url = resolveApiUrl(path);
@@ -43,12 +49,19 @@ async function request(path, options = {}) {
 
   try {
     const res = await fetch(url, {
-      headers: { "Content-Type": "application/json", ...fetchOptions.headers },
-      signal: controller.signal,
       ...fetchOptions,
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+        ...fetchOptions.headers,
+      },
+      signal: controller.signal,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      if (res.status === 401 && !path.startsWith("/api/login") && !path.startsWith("/api/register")) {
+        clearSession();
+      }
       const detail = data.detail;
       const msg =
         typeof detail === "string"
