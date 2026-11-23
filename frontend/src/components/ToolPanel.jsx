@@ -135,14 +135,24 @@ export default function ToolPanel({ tool, onClose }) {
       return;
     }
     const needMask = /去掉|删除|消除|去除|路人|擦除|移除/.test(input || "");
-    let mask = maskBase64;
-    if (photoRequired && needMask) {
-      const canvas = canvasRef.current;
-      if (canvas) mask = canvas.toDataURL("image/png");
-      if (!mask) {
-        setError("去掉路人请先在图上涂抹要改的区域（白色笔刷）");
-        return;
+    let mask;
+    if (photoRequired && canvasRef.current) {
+      // 仅当画布上有涂抹（非纯黑）时才传蒙版
+      const c = canvasRef.current;
+      const ctx = c.getContext("2d");
+      const data = ctx.getImageData(0, 0, c.width, c.height).data;
+      let painted = false;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i] > 40 || data[i + 1] > 40 || data[i + 2] > 40) {
+          painted = true;
+          break;
+        }
       }
+      if (painted) mask = c.toDataURL("image/png");
+    }
+    if (photoRequired && needMask && !mask) {
+      setError("去掉路人/物体请先涂抹要改的区域；提亮、加高光等不必涂抹");
+      return;
     }
     setLoading(true);
     setError("");
@@ -154,7 +164,7 @@ export default function ToolPanel({ tool, onClose }) {
         user_id: user.user_id,
         input,
         image_base64: photoRequired ? imageBase64 : undefined,
-        mask_base64: photoRequired ? mask || undefined : undefined,
+        mask_base64: mask || undefined,
       });
       const out = res.data.output || "";
       setOutput(out);
@@ -209,7 +219,7 @@ export default function ToolPanel({ tool, onClose }) {
               {preview ? (
                 <>
                   <p className="profile-desc" style={{ margin: "8px 0" }}>
-                    去掉路人：在下方图上用笔刷涂抹要删除的区域，再点生成（只写文字往往几乎不改图）
+                    去掉路人/物体：请涂抹要改的区域。提亮、加高光、滤镜：不用涂抹，直接写需求即可。
                   </p>
                   <div className="mask-stage">
                     <img

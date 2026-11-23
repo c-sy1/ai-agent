@@ -581,9 +581,9 @@ def _prepare_mask_data_url(mask_base64: str, size: tuple[int, int]) -> str:
     mask = mask.resize(size, Image.Resampling.NEAREST)
     # 二值化：偏亮视为要编辑区域
     mask = mask.point(lambda p: 255 if p > 40 else 0)
-    # 若几乎全黑，说明用户没涂抹
+    # 若几乎全黑，说明用户没涂抹 → 返回 None，走整图指令编辑
     if mask.getextrema()[1] < 128:
-        raise MediaError("请先在图上涂抹要去掉/修改的区域（红色笔刷）")
+        return None
     rgb = ImageOps.colorize(mask, black=(0, 0, 0), white=(255, 255, 255))
     buf = BytesIO()
     rgb.save(buf, format="PNG")
@@ -612,11 +612,18 @@ def edit_image(
             "只写文字、不涂抹时模型经常几乎不改图。"
         )
 
-    edit_prompt = (
-        f"{text}。"
-        "在指定区域内自然修复，用周围背景填补，"
-        "保持未涂抹区域（尤其主体人物）完全不变，痕迹自然。"
-    )[:800]
+    if (mask_base64 or "").strip():
+        edit_prompt = (
+            f"{text}。"
+            "仅在涂抹（白色）区域内修改，用周围背景自然填补，"
+            "未涂抹区域保持不变，不要添加奇怪新物体。"
+        )[:800]
+    else:
+        edit_prompt = (
+            f"{text}。"
+            "在原图基础上整体调整（如光线、高光、滤镜、色调），"
+            "保持人物身份与构图一致，不要换成另一张无关照片。"
+        )[:800]
 
     data_url, size = _prepare_edit_image(image_base64)
     _dashscope_api_key(purpose="照片真修图（通义万相图像编辑）")
@@ -626,10 +633,18 @@ def edit_image(
         "prompt": edit_prompt,
         "base_image_url": data_url,
     }
+    mask_url = None
     if (mask_base64 or "").strip():
+        mask_url = _prepare_mask_data_url(mask_base64, size)
+    if mask_url:
         input_obj["function"] = "description_edit_with_mask"
-        input_obj["mask_image_url"] = _prepare_mask_data_url(mask_base64, size)
+        input_obj["mask_image_url"] = mask_url
     else:
+        if need_mask:
+            raise MediaError(
+                "去掉路人/物体请先在图上涂抹要修改的区域；"
+                "若只是提亮、加高光、调滤镜，直接写需求即可，不必涂抹。"
+            )
         input_obj["function"] = "description_edit"
 
     with httpx.Client(timeout=60.0) as client:
