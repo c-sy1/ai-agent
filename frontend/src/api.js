@@ -104,6 +104,10 @@ export const api = {
       body: JSON.stringify(body),
     }),
   hotTopics: () => request("/api/hot-topics"),
+  works: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return request(`/api/works${q ? `?${q}` : ""}`);
+  },
   tools: (params = {}) => {
     const q = new URLSearchParams(params).toString();
     return request(`/api/tools${q ? `?${q}` : ""}`);

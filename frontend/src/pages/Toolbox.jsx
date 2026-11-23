@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import ToolPanel from "../components/ToolPanel";
 
@@ -69,23 +70,42 @@ function ToolCard({ tool, variant, gradient, onOpen }) {
 }
 
 export default function Toolbox() {
+  const [searchParams] = useSearchParams();
   const [all, setAll] = useState([]);
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(searchParams.get("q") || "");
   const [activeTool, setActiveTool] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fromUrl = searchParams.get("q");
+    if (fromUrl != null) setQ(fromUrl);
+  }, [searchParams]);
 
   useEffect(() => {
     setLoading(true);
     api
       .tools()
       .then((r) => {
-        setAll(r.data || []);
+        const list = r.data || [];
+        setAll(list);
         setError("");
+        // 侧边栏「照片修复」：自动打开匹配工具
+        const keyword = (searchParams.get("q") || "").trim();
+        if (keyword) {
+          const hit = list.find(
+            (t) =>
+              (t.name || "").includes(keyword) ||
+              (t.description || "").includes(keyword) ||
+              (t.name || "").includes("修复") ||
+              (t.name || "").includes("照片")
+          );
+          if (hit) setActiveTool(hit);
+        }
       })
       .catch((e) => setError(e.message || "工具列表加载失败"))
       .finally(() => setLoading(false));
-  }, []);
+  }, [searchParams]);
 
   const filtered = useMemo(() => {
     if (!q.trim()) return all;

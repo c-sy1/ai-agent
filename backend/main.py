@@ -24,6 +24,7 @@ from auth_service import (
 )
 from chat_service import chat_in_conversation
 from tool_service import run_tool, run_media
+
 from media_service import GENERATED_ROOT, MediaError
 from database import (
     Agent,
@@ -977,6 +978,62 @@ def admin_recharges(
 
 # 前端构建产物：同一端口同时提供 API + 页面
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+@app.get("/api/works")
+def list_works(
+    kind: str = Query("all"),
+    limit: int = Query(60, ge=1, le=200),
+    auth: User = Depends(get_current_user),
+):
+    """列出本机已生成的图片/视频（作品中心）。"""
+    from media_service import IMAGE_DIR, UPLOAD_DIR, VIDEO_DIR
+
+    _ = auth  # 需登录可见
+    items: list[dict] = []
+
+    def collect(folder: Path, media_kind: str, url_prefix: str):
+        if not folder.is_dir():
+            return
+        for path in folder.iterdir():
+            if not path.is_file():
+                continue
+            suffix = path.suffix.lower()
+            if media_kind == "image" and suffix not in (
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".webp",
+                ".gif",
+            ):
+                continue
+            if media_kind == "video" and suffix not in (".mp4", ".webm", ".mov"):
+                continue
+            try:
+                mtime = path.stat().st_mtime
+                size = path.stat().st_size
+            except OSError:
+                continue
+            items.append(
+                {
+                    "id": f"{media_kind}-{path.name}",
+                    "name": path.name,
+                    "kind": media_kind,
+                    "url": f"/generated/{url_prefix}/{path.name}",
+                    "size": size,
+                    "mtime": mtime,
+                }
+            )
+
+    k = (kind or "all").lower()
+    if k in ("all", "image"):
+        collect(IMAGE_DIR, "image", "images")
+        collect(UPLOAD_DIR, "image", "uploads")
+    if k in ("all", "video"):
+        collect(VIDEO_DIR, "video", "videos")
+
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    return {"code": 200, "data": items[:limit]}
+
+
 _ASSETS_DIR = _FRONTEND_DIST / "assets"
 if _ASSETS_DIR.is_dir():
     app.mount("/assets", StaticFiles(directory=str(_ASSETS_DIR)), name="assets")

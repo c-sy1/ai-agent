@@ -81,18 +81,34 @@ button {
 }
 
 .nav-list {
-  margin-top: 24px;
+  margin-top: 20px;
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 2px;
+}
+
+.nav-group-label {
+  margin: 12px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #b2bec3;
+  text-transform: none;
+}
+
+.nav-group-label:first-child {
+  margin-top: 0;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border-radius: 10px;
   color: var(--muted);
   font-size: 14px;
@@ -107,6 +123,87 @@ button {
 .nav-sub {
   padding-left: 36px;
   font-size: 13px;
+}
+
+.works-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.works-tabs button {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.works-tabs button.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(108, 92, 231, 0.08);
+}
+
+.works-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.works-card {
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.works-card img,
+.works-card video {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+  background: #f1f2f6;
+}
+
+.works-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.works-meta a {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.usage-page-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.usage-page-card h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.usage-big {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0 0 6px;
+  color: var(--text);
+}
+
+.usage-big span {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
 }
 
 .user-bar {
