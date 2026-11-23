@@ -17,12 +17,14 @@ npm install
 
 ### 方式 A：一键同端口（推荐）
 
-双击 **`start.bat`**，或：
+双击 **`打开 Apex AI.bat`**（本机一键启动），或：
 
 ```bash
 cd frontend && npm run build
 cd ../backend && python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 ```
+
+线上部署在云服务器时，用户只需打开网站地址，无需任何 bat。
 
 浏览器打开 **http://127.0.0.1:8000**（页面 + `/api` 都在 8000，已连通）。
 
