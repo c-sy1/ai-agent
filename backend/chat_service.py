@@ -82,10 +82,21 @@ def _llm_reply(
     if not cfg:
         return None
 
-    messages = [{"role": "system", "content": system_prompt}]
-    for item in history[-10:]:
-        role = "user" if item["role"] == ROLE_HUMAN else "assistant"
-        messages.append({"role": role, "content": item["content"]})
+    # 明确要求使用会话历史，避免模型套用「我没有记忆」话术
+    sys = (system_prompt or "").strip() or "你是 Apex AI 助手。"
+    sys += (
+        "\n\n【会话规则】本请求 messages 中更早的 user/assistant 即当前会话历史。"
+        "必须结合这些历史连贯回答；用户问「还记得吗/我刚问了什么」时直接复述上文。"
+        "禁止说没有记忆、每次对话独立、无法回忆本会话内容。"
+    )
+    messages = [{"role": "system", "content": sys}]
+    for item in history[-20:]:
+        content = (item.get("content") or "").strip()
+        if not content:
+            continue
+        raw_role = (item.get("role") or "").strip().lower()
+        role = "user" if raw_role in ("human", "user") else "assistant"
+        messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": question})
 
     timeout = httpx.Timeout(20.0, read=float(os.getenv("QIANWEN_READ_TIMEOUT", "120")))
@@ -165,7 +176,10 @@ def chat_in_conversation(
     system_prompt = (
         agent.system_prompt
         if agent and agent.system_prompt
-        else "你是 Apex AI 全能助手，用简洁清晰的中文回答用户问题。"
+        else (
+            "你是 Apex AI 全能助手，用简洁清晰的中文回答。"
+            "你会记住并使用当前会话中的历史消息来连贯对话。"
+        )
     )
 
     history_rows = (

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, getSession } from "../api";
 
@@ -6,9 +6,14 @@ export default function ChatFooter({ conversationId, onSent }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [activeCid, setActiveCid] = useState(conversationId ?? null);
   const navigate = useNavigate();
   const user = getSession();
   const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (conversationId) setActiveCid(conversationId);
+  }, [conversationId]);
 
   const doSend = async (message) => {
     const q = (message ?? text).trim();
@@ -26,10 +31,11 @@ export default function ChatFooter({ conversationId, onSent }) {
     try {
       const res = await api.chat({
         user_id: user.user_id,
-        conversation_id: conversationId ?? undefined,
+        conversation_id: activeCid ?? conversationId ?? undefined,
         question: q,
       });
       const cid = res.data.conversation_id;
+      setActiveCid(cid);
       if (!conversationId) navigate(`/chat/${cid}`, { replace: true });
       onSent?.(cid);
     } catch {
