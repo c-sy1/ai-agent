@@ -18,11 +18,12 @@ export default function Profile() {
   const [okMsg, setOkMsg] = useState("");
 
   const refresh = async () => {
-    if (!session?.user_id) return;
+    const current = getSession();
+    if (!current?.user_id) return;
     const [res, pkg, ord] = await Promise.all([
-      api.profile(session.user_id),
+      api.profile(current.user_id),
       api.vipPackages(),
-      api.vipOrders(session.user_id),
+      api.vipOrders(current.user_id),
     ]);
     setProfile(res.data);
     setNickname(res.data.nickname || "");
@@ -31,7 +32,9 @@ export default function Profile() {
     setPayReady(Boolean(pkg.data?.pay_ready));
     setOrders(ord.data || []);
     setSession({
-      ...session,
+      ...current,
+      user_id: res.data.user_id,
+      username: res.data.username,
       nickname: res.data.nickname,
       email: res.data.email,
       is_vip: res.data.is_vip,
@@ -56,23 +59,47 @@ export default function Profile() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
+
+    // 切回本页 / 另一标签改了登录态时，重新拉资料（避免 VIP 不更新、账号显示错乱）
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        refresh().catch(() => {});
+      }
+    };
+    const onStorage = (e) => {
+      if (e.key === "apex_user") {
+        const next = getSession();
+        if (!next?.user_id) {
+          navigate("/login", { replace: true });
+          return;
+        }
+        refresh().catch((err) => setError(err.message));
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("storage", onStorage);
+    };
   }, [session?.user_id, navigate]);
 
   const save = async (e) => {
     e.preventDefault();
-    if (!session?.user_id) return;
+    const current = getSession();
+    if (!current?.user_id) return;
     setSaving(true);
     setError("");
     setOkMsg("");
     try {
       const res = await api.updateProfile({
-        user_id: session.user_id,
+        user_id: current.user_id,
         nickname,
         email,
       });
       setProfile((p) => ({ ...p, ...res.data }));
       setSession({
-        ...session,
+        ...current,
         username: res.data.username,
         nickname: res.data.nickname,
         email: res.data.email,
@@ -86,13 +113,14 @@ export default function Profile() {
   };
 
   const buy = async (packageId) => {
-    if (!session?.user_id) return;
+    const current = getSession();
+    if (!current?.user_id) return;
     setPaying(packageId);
     setError("");
     setOkMsg("");
     try {
       const res = await api.vipRecharge({
-        user_id: session.user_id,
+        user_id: current.user_id,
         package_id: packageId,
       });
       const payUrl = res.data?.pay_url;
@@ -108,11 +136,12 @@ export default function Profile() {
   };
 
   const cancelOrder = async (orderId) => {
-    if (!session?.user_id) return;
+    const current = getSession();
+    if (!current?.user_id) return;
     setError("");
     setOkMsg("");
     try {
-      await api.vipCancelOrder(orderId, session.user_id);
+      await api.vipCancelOrder(orderId, current.user_id);
       setOkMsg("待支付订单已取消");
       await refresh();
     } catch (err) {
@@ -121,11 +150,12 @@ export default function Profile() {
   };
 
   const continuePay = async (orderId) => {
-    if (!session?.user_id) return;
+    const current = getSession();
+    if (!current?.user_id) return;
     setError("");
     setOkMsg("");
     try {
-      const res = await api.vipContinuePay(orderId, session.user_id);
+      const res = await api.vipContinuePay(orderId, current.user_id);
       const payUrl = res.data?.pay_url;
       if (!payUrl) throw new Error("未返回支付链接");
       setOkMsg("正在跳转支付宝…");
