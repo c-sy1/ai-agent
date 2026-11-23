@@ -252,6 +252,79 @@ def _soften_video_prompt(prompt: str) -> str:
     return text[:800]
 
 
+_CN_DURATION = {
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+    "十一": 11,
+    "十二": 12,
+    "十三": 13,
+    "十四": 14,
+    "十五": 15,
+}
+
+
+def parse_video_duration(text: str) -> int | None:
+    """从用户话里解析想要的秒数；解析不到返回 None。"""
+    t = text or ""
+    m = re.search(r"(\d+)\s*(秒|s\b|sec)", t, re.I)
+    if m:
+        return max(1, min(15, int(m.group(1))))
+    m = re.search(r"(十一|十二|十三|十四|十五|十|[一二两三四五六七八九])\s*秒", t)
+    if m:
+        return _CN_DURATION.get(m.group(1))
+    return None
+
+
+def video_prompt_lacks_scene(text: str) -> bool:
+    """只有「生成N秒视频」这类空指令、没有画面内容时返回 True。"""
+    cleaned = _strip_media_command(text or "")
+    cleaned = re.sub(
+        r"(\d+\s*(秒|s|sec)|[一二两三四五六七八九十十一十二十三十四十五]+\s*秒|十秒钟?)",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"(一段|一个|一部|生成|制作|做|视频|短片|动画|请|帮我|给我|帮忙|高清|秒|钟)",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(r"[\s，,。.!！?？：:、～~]+", "", cleaned)
+    return len(cleaned) < 4
+
+
+def _resolve_video_duration(prompt: str, requested: int | None) -> tuple[int, str]:
+    """
+    返回实际提交秒数 + 给用户的说明。
+    免费魔搭约 3～5 秒；付费 wan2.5 才支持 10 秒。
+    """
+    want = requested or parse_video_duration(prompt) or 5
+    want = max(1, min(15, int(want)))
+    if want > 5 and _video_allow_paid():
+        # wan2.5：5 或 10
+        actual = 10 if want >= 10 else 5
+        note = f"已按约 {actual} 秒生成（付费万相）。"
+        return actual, note
+    actual = 5 if want >= 5 else max(3, want)
+    if want > 5:
+        note = (
+            f"你要 {want} 秒，但当前免费视频模型单条约 3～5 秒，已按约 {actual} 秒生成。"
+            "要更长需开启付费万相（VIDEO_ALLOW_PAID=true，费用更高）。"
+        )
+    else:
+        note = f"单条约 {actual} 秒（模型上限，无法精确卡到任意秒数）。"
+    return actual, note
+
+
 def _is_content_policy_error(msg: str) -> bool:
     text = msg or ""
     low = text.lower()
@@ -271,11 +344,18 @@ def _is_content_policy_error(msg: str) -> bool:
     return any(k in low or k in text for k in keys)
 
 
-def _submit_video_task(prompt: str, model: str) -> str:
+def _submit_video_task(prompt: str, model: str, duration: int = 5) -> str:
+    params: dict = {"size": "1280*720", "prompt_extend": True}
+    # wan2.5 支持 5/10；wan2.6 支持 2～15；2.1/2.2 固定 5 秒传了也会忽略
+    low = (model or "").lower()
+    if "wan2.5" in low or "wan2.6" in low:
+        params["duration"] = int(duration)
+    elif duration:
+        params["duration"] = 5
     payload = {
         "model": model,
         "input": {"prompt": prompt[:800]},
-        "parameters": {"size": "1280*720", "prompt_extend": True},
+        "parameters": params,
     }
     with httpx.Client(timeout=30.0) as client:
         resp = client.post(
@@ -295,8 +375,8 @@ def _submit_video_task(prompt: str, model: str) -> str:
     return task_id
 
 
-def _generate_video_modelscope(prompt: str) -> str:
-    """魔搭真实文生视频；限流时短暂重试，不做拼图兜底。"""
+def _generate_video_modelscope(prompt: str, duration: int = 5) -> str:
+    """魔搭真实文生视频；限流时短暂重试。时长约 3～5 秒。"""
     key = _modelscope_api_key()
     model = os.getenv("MODELSCOPE_VIDEO_MODEL", "Wan-AI/Wan2.1-T2V-1.3B")
     headers = {
@@ -305,6 +385,12 @@ def _generate_video_modelscope(prompt: str) -> str:
         "X-ModelScope-Async-Mode": "true",
         "X-ModelScope-DataInspection": "{}",
     }
+    body = {
+        "model": model,
+        "prompt": prompt[:500],
+        # 部分魔搭网关会读 seconds；不支持则忽略，仍约 3～5 秒
+        "seconds": max(3, min(5, int(duration or 5))),
+    }
     last_error = "魔搭视频失败"
     with httpx.Client(timeout=60.0) as client:
         data = None
@@ -312,7 +398,7 @@ def _generate_video_modelscope(prompt: str) -> str:
             resp = client.post(
                 f"{MODELSCOPE_BASE}/videos/generations",
                 headers=headers,
-                json={"model": model, "prompt": prompt[:500]},
+                json=body,
             )
             if resp.status_code >= 400:
                 last_error = _parse_error(resp)
@@ -368,12 +454,20 @@ def _generate_video_modelscope(prompt: str) -> str:
     raise MediaError("魔搭视频生成超时")
 
 
-def _generate_video_dashscope(prompt: str) -> str:
+def _generate_video_dashscope(prompt: str, duration: int = 5) -> str:
     """通义万相真实文生视频（连贯短片，非拼图）。"""
     last_error = "通义万相视频失败"
-    for model in _video_models():
+    models = list(_video_models())
+    # 要 10 秒时优先 wan2.5（支持 5/10）
+    if duration and duration >= 10:
+        long_model = (
+            os.getenv("DASHSCOPE_VIDEO_LONG_MODEL") or "wan2.5-t2v-preview"
+        ).strip()
+        if long_model:
+            models = [long_model] + [m for m in models if m != long_model]
+    for model in models:
         try:
-            task_id = _submit_video_task(prompt, model)
+            task_id = _submit_video_task(prompt, model, duration=duration)
             if task_id.startswith("http") or task_id.startswith("/"):
                 return _save_video_url(task_id)
             result = _poll_dashscope_task(task_id, timeout_sec=300)
@@ -419,17 +513,20 @@ def _video_allow_paid() -> bool:
     )
 
 
-def generate_video(prompt: str) -> str:
+def generate_video(prompt: str, duration: int | None = None) -> tuple[str, str]:
+    """生成视频。返回 (相对路径, 时长说明)。"""
     prompt = (prompt or "").strip()
     if not prompt:
         raise MediaError("请描述要生成的视频内容")
 
+    actual_sec, duration_note = _resolve_video_duration(prompt, duration)
     soft = _soften_video_prompt(prompt)
     errors: list[str] = []
 
     # 默认只走魔搭免费文生视频（可能排队/限流）
     try:
-        return _generate_video_modelscope(soft)
+        path = _generate_video_modelscope(soft, duration=actual_sec)
+        return path, duration_note
     except MediaError as e:
         errors.append(f"魔搭视频：{e}")
 
@@ -449,7 +546,8 @@ def generate_video(prompt: str) -> str:
                 continue
             seen.add(key)
             try:
-                return _generate_video_dashscope(key)
+                path = _generate_video_dashscope(key, duration=actual_sec)
+                return path, duration_note
             except MediaError as e:
                 msg = str(e)
                 errors.append(f"通义万相：{msg}")
@@ -856,5 +954,9 @@ def format_image_answer(url: str, prompt: str) -> str:
     return f"已为你生成图片（可直接查看/下载）：\n\n![生成图片]({url})\n\n**描述**：{prompt}"
 
 
-def format_video_answer(url: str, prompt: str) -> str:
-    return f"已为你生成视频：\n\n[[video:{url}]]\n\n**描述**：{prompt}"
+def format_video_answer(url: str, prompt: str, note: str = "") -> str:
+    extra = f"\n\n**说明**：{note}" if note else ""
+    return (
+        f"已为你生成视频：\n\n[[video:{url}]]\n\n"
+        f"**描述**：{prompt}{extra}"
+    )

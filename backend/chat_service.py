@@ -17,7 +17,9 @@ from media_service import (
     format_video_answer,
     generate_image,
     generate_video,
+    parse_video_duration,
     resolve_media_prompt,
+    video_prompt_lacks_scene,
 )
 from quota_service import QuotaExceededError, require_and_consume
 from search_service import fetch_search, is_search_question
@@ -229,47 +231,68 @@ def chat_in_conversation(
             )
 
     if answer is None and media_type:
-        prompt = resolve_media_prompt(question, history, media_type)
-        try:
-            if media_type == "video":
-                require_vip(user, VIP_FEATURE_VIDEO)
-                url = generate_video(prompt)
-                answer = format_video_answer(url, prompt)
-            else:
-                require_and_consume(db, user, "image")
-                url = generate_image(prompt)
-                answer = format_image_answer(url, prompt)
-        except QuotaExceededError as e:
-            answer = (
-                f"🔒 {e}\n\n"
-                "开通入口：左下角进入「个人主页」选择套餐充值。"
+        # 只说「生成十秒视频」、没写画面 → 先追问，避免模型乱编场景
+        if media_type == "video" and video_prompt_lacks_scene(question):
+            want = parse_video_duration(question)
+            dur_tip = (
+                f"你提到约 {want} 秒；"
+                if want
+                else ""
             )
-        except VipRequiredError as e:
             answer = (
-                f"🔒 {e}\n\n"
-                "开通入口：左侧进入「个人主页」选择套餐，用支付宝完成支付；"
-                "管理员也可在「管理后台」直接开通 VIP。"
+                "可以生成视频，但还缺画面内容。\n\n"
+                "请补充具体场景，例如：\n"
+                "「夕阳海边，一只金毛犬在沙滩上奔跑」\n"
+                "「赛博朋克夜市，霓虹灯下人群穿梭」\n\n"
+                f"{dur_tip}"
+                "说明：免费/常用模型单条约 3～5 秒；"
+                "要 10 秒需开启付费万相（费用更高）。"
             )
-        except MediaError as e:
-            kind = "视频" if media_type == "video" else "图片"
-            tip = (
-                "图片已优先走魔搭免费文生图。"
-                if media_type == "image"
-                else (
-                    "视频为 VIP 功能；开通后走魔搭免费通道（可能排队）。"
-                    "若魔搭 429：等一两分钟再试。"
+        else:
+            prompt = resolve_media_prompt(question, history, media_type)
+            try:
+                if media_type == "video":
+                    require_vip(user, VIP_FEATURE_VIDEO)
+                    want = parse_video_duration(question) or parse_video_duration(
+                        prompt
+                    )
+                    url, note = generate_video(prompt, duration=want)
+                    answer = format_video_answer(url, prompt, note)
+                else:
+                    require_and_consume(db, user, "image")
+                    url = generate_image(prompt)
+                    answer = format_image_answer(url, prompt)
+            except QuotaExceededError as e:
+                answer = (
+                    f"🔒 {e}\n\n"
+                    "开通入口：左下角进入「个人主页」选择套餐充值。"
                 )
-            )
-            answer = (
-                f"⚠️ 真实{kind}生成失败\n\n"
-                f"{e}\n\n"
-                f"{tip}\n\n"
-                "下面先给你文字版分镜/说明：\n\n"
-            )
-            text_part = _unwrap_llm(
-                _llm_reply(question, history, system_prompt), question
-            )
-            answer += text_part or _demo_reply(question, agent)
+            except VipRequiredError as e:
+                answer = (
+                    f"🔒 {e}\n\n"
+                    "开通入口：左侧进入「个人主页」选择套餐，用支付宝完成支付；"
+                    "管理员也可在「管理后台」直接开通 VIP。"
+                )
+            except MediaError as e:
+                kind = "视频" if media_type == "video" else "图片"
+                tip = (
+                    "图片已优先走魔搭免费文生图。"
+                    if media_type == "image"
+                    else (
+                        "视频为 VIP 功能；开通后走魔搭免费通道（可能排队）。"
+                        "若魔搭 429：等一两分钟再试。"
+                    )
+                )
+                answer = (
+                    f"⚠️ 真实{kind}生成失败\n\n"
+                    f"{e}\n\n"
+                    f"{tip}\n\n"
+                    "下面先给你文字版分镜/说明：\n\n"
+                )
+                text_part = _unwrap_llm(
+                    _llm_reply(question, history, system_prompt), question
+                )
+                answer += text_part or _demo_reply(question, agent)
 
     if answer is None:
         try:

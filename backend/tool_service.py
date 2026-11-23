@@ -130,11 +130,11 @@ def run_media(db: Session, user_id: int, media_type: str, prompt: str) -> dict:
     p = resolve_media_prompt(prompt, [], media_type)
     if media_type == "video":
         require_vip(user, VIP_FEATURE_VIDEO)
-        url = generate_video(p)
+        url, note = generate_video(p)
         return {
             "media_type": "video",
             "media_url": url,
-            "output": format_video_answer(url, p),
+            "output": format_video_answer(url, p, note),
         }
     require_and_consume(db, user, "image")
     url = generate_image(p)
