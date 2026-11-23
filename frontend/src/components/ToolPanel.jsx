@@ -129,7 +129,7 @@ export default function ToolPanel({ tool, onClose }) {
                 <img src={preview} alt="预览" className="tool-upload-preview" />
               ) : (
                 <p className="profile-desc" style={{ margin: "8px 0 0" }}>
-                  必须上传一张照片后再生成
+                  必须上传原图；将基于这张图做真修图（非另画一张）
                 </p>
               )}
             </div>
@@ -140,14 +140,18 @@ export default function ToolPanel({ tool, onClose }) {
         <textarea
           className="tool-modal-input"
           rows={5}
-          placeholder={tool.input_placeholder || "请输入你的需求…"}
+          placeholder={
+            photoRequired
+              ? "例如：去掉前方路人、提亮人脸、去除杂物，保持原图主体不变"
+              : tool.input_placeholder || "请输入你的需求…"
+          }
           value={input}
           onChange={(e) => setInput(e.target.value)}
         />
 
         <div className="tool-modal-actions">
           <button type="button" className="btn-primary" onClick={run} disabled={loading}>
-            {loading ? "AI 生成中…" : "立即生成"}
+            {loading ? (photoRequired ? "原图修图中，约需 10～30 秒…" : "AI 生成中…") : "立即生成"}
           </button>
           {output && (
             <button type="button" className="chip" onClick={copy}>
@@ -172,7 +176,19 @@ export default function ToolPanel({ tool, onClose }) {
           </div>
         )}
 
-        {mediaUrl && (
+        {photoRequired && preview && mediaUrl && (
+          <div className="tool-compare" style={{ marginTop: 12 }}>
+            <div>
+              <label className="tool-modal-label">原图</label>
+              <img src={preview} alt="原图" className="tool-upload-preview" />
+            </div>
+            <div>
+              <label className="tool-modal-label">修图结果</label>
+              <img src={mediaUrl} alt="修图结果" className="tool-upload-preview" />
+            </div>
+          </div>
+        )}
+        {!photoRequired && mediaUrl && (
           <div style={{ marginTop: 12 }}>
             <label className="tool-modal-label">效果图</label>
             <img src={mediaUrl} alt="生成结果" className="tool-upload-preview" />

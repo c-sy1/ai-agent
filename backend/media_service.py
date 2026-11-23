@@ -498,8 +498,7 @@ def _save_image_url(url: str) -> str:
     return _public_path("images", name)
 
 
-def save_upload_image(image_base64: str) -> str:
-    """保存前端上传的 dataURL / base64 图片，返回 /generated/uploads/..."""
+def _decode_image_bytes(image_base64: str) -> tuple[bytes, str]:
     raw = (image_base64 or "").strip()
     if not raw:
         raise MediaError("请先上传照片")
@@ -519,13 +518,108 @@ def save_upload_image(image_base64: str) -> str:
         raise MediaError("图片解码失败") from e
     if len(data) < 32:
         raise MediaError("图片过小或损坏")
-    if len(data) > 8 * 1024 * 1024:
-        raise MediaError("图片请小于 8MB")
-    ext = { "image/png": ".png", "image/webp": ".webp" }.get(mime, ".jpg")
+    if len(data) > 10 * 1024 * 1024:
+        raise MediaError("图片请小于 10MB")
+    return data, mime
+
+
+def save_upload_image(image_base64: str) -> str:
+    """保存前端上传的 dataURL / base64 图片，返回 /generated/uploads/..."""
+    data, mime = _decode_image_bytes(image_base64)
+    ext = {"image/png": ".png", "image/webp": ".webp"}.get(mime, ".jpg")
     name = f"{uuid.uuid4().hex}{ext}"
     dest = UPLOAD_DIR / name
     dest.write_bytes(data)
     return _public_path("uploads", name)
+
+
+def _prepare_edit_data_url(image_base64: str) -> str:
+    """规范为万相编辑可用的 JPEG dataURL（边长约 512～2048）。"""
+    from io import BytesIO
+
+    from PIL import Image
+
+    data, _mime = _decode_image_bytes(image_base64)
+    try:
+        img = Image.open(BytesIO(data))
+        img = img.convert("RGB")
+    except Exception as e:
+        raise MediaError("无法读取上传图片，请换 jpg/png") from e
+
+    w, h = img.size
+    long_side = max(w, h)
+    if long_side > 2048:
+        scale = 2048 / float(long_side)
+        img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
+        w, h = img.size
+    if min(w, h) < 512:
+        scale = 512 / float(min(w, h))
+        img = img.resize((max(512, int(w * scale)), max(512, int(h * scale))), Image.Resampling.LANCZOS)
+
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/jpeg;base64,{b64}"
+
+
+def edit_image(prompt: str, image_base64: str) -> str:
+    """
+    真修图：通义万相 wanx2.1-imageedit 指令编辑（基于原图）。
+    需要 DASHSCOPE_API_KEY（sk-...），会按量计费。
+    """
+    text = (prompt or "").strip()
+    if not text:
+        raise MediaError("请填写修复需求，例如：去掉前方路人、提亮人脸")
+    # 把口语需求写清楚，提升去路人/修复成功率
+    edit_prompt = (
+        f"{text}。"
+        "请在原图基础上修改，保持主体人物、构图、光线和整体风格一致，"
+        "修复痕迹自然，不要换成另一张无关照片。"
+    )[:800]
+
+    data_url = _prepare_edit_data_url(image_base64)
+    try:
+        key = _dashscope_api_key()
+    except MediaError as e:
+        raise MediaError(
+            f"{e} 真修图必须使用阿里云百炼/通义万相 Key（sk-...），"
+            "请在 backend/.env 配置 DASHSCOPE_API_KEY。"
+        ) from e
+
+    model = (os.getenv("DASHSCOPE_IMAGE_EDIT_MODEL") or "wanx2.1-imageedit").strip()
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{DASHSCOPE_BASE}/services/aigc/image2image/image-synthesis",
+            headers=_dashscope_headers(async_mode=True),
+            json={
+                "model": model,
+                "input": {
+                    "function": "description_edit",
+                    "prompt": edit_prompt,
+                    "base_image_url": data_url,
+                },
+                "parameters": {"n": 1},
+            },
+        )
+        if resp.status_code >= 400:
+            raise MediaError(f"真修图请求失败：{_parse_error(resp)}")
+        data = resp.json()
+        task_id = (
+            (data.get("output") or {}).get("task_id")
+            or data.get("task_id")
+            or (data.get("output") or {}).get("taskId")
+        )
+        if not task_id:
+            urls = _extract_urls(data)
+            if urls:
+                return _save_image_url(urls[0])
+            raise MediaError(f"真修图未返回任务 ID：{str(data)[:240]}")
+
+        result = _poll_dashscope_task(task_id, timeout_sec=180)
+        urls = _extract_urls(result)
+        if not urls:
+            raise MediaError("真修图完成但未返回图片地址")
+        return _save_image_url(urls[0])
 
 
 def _save_video_url(url: str) -> str:

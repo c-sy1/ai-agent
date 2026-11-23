@@ -4,6 +4,7 @@ from chat_service import generate_reply
 from database import Tool, User
 from media_service import (
     MediaError,
+    edit_image,
     format_image_answer,
     format_video_answer,
     generate_image,
@@ -56,29 +57,15 @@ def run_tool(
             raise ValueError("请先上传照片，再描述要如何修复/处理")
         upload_url = save_upload_image(image_base64)
         require_and_consume(db, user, "image")
-        prompt = (
-            f"Photo restoration / enhancement result image. "
-            f"User request: {text}. "
-            "Natural lighting, clean details, realistic photo quality, no watermark."
-        )
         try:
-            out_url = generate_image(prompt)
+            # 真修图：通义万相基于原图指令编辑（非文生图）
+            out_url = edit_image(text, image_base64)
         except MediaError:
             raise
-        advice = generate_reply(
-            (
-                f"用户上传了一张照片，修复需求：{text}\n"
-                "请给出简洁的修复说明（3～6条），语气专业，不要否认已上传图片。"
-            ),
-            (
-                f"你是「{tool.name}」助手。{tool.description}"
-                "用户已经上传照片，请基于需求给修复建议。"
-            ),
-            tool_name=tool.name,
-        )
         output = (
-            f"{advice}\n\n"
-            f"已收到你的原图：{upload_url}\n\n"
+            "已基于你上传的**原图**完成修图（通义万相图像编辑）。\n\n"
+            f"修复需求：{text}\n\n"
+            f"原图：{upload_url}\n\n"
             f"{format_image_answer(out_url, text)}"
         )
         return {

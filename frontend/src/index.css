@@ -1235,3 +1235,15 @@ a.user-bar-link.active {
   border: 1px solid var(--border);
   background: #fff;
 }
+
+.tool-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .tool-compare {
+    grid-template-columns: 1fr;
+  }
+}
