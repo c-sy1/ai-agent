@@ -1,0 +1,40 @@
+import { Navigate, Route, Routes } from "react-router-dom";
+import { getSession } from "./api";
+import Login from "./pages/Login";
+import AppLayout from "./pages/AppLayout";
+import Home from "./pages/Home";
+import Toolbox from "./pages/Toolbox";
+import Agents from "./pages/Agents";
+import Chat from "./pages/Chat";
+import Profile from "./pages/Profile";
+import Admin from "./pages/Admin";
+
+function RequireAuth({ children }) {
+  if (!getSession()) return <Navigate to="/login" replace />;
+  return children;
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route
+        path="/"
+        element={
+          <RequireAuth>
+            <AppLayout />
+          </RequireAuth>
+        }
+      >
+        <Route index element={<Home />} />
+        <Route path="toolbox" element={<Toolbox />} />
+        <Route path="agents" element={<Agents />} />
+        <Route path="chat" element={<Chat />} />
+        <Route path="chat/:conversationId" element={<Chat />} />
+        <Route path="profile" element={<Profile />} />
+        <Route path="admin" element={<Admin />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}

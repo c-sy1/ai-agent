@@ -1,0 +1,7 @@
+.env
+apex_ai.db
+__pycache__/
+generated/
+keys/*.pem
+keys/*.txt
+!keys/把私钥和APPID贴这里.txt

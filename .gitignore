@@ -1,0 +1,15 @@
+﻿node_modules/
+frontend/node_modules/
+backend/.venv/
+**/__pycache__/
+*.pyc
+.env
+backend/.env
+backend/keys/
+*.pem
+apex_ai.db
+backend/apex_ai.db
+backend/generated/
+frontend/dist/
+.DS_Store
+*.zip
