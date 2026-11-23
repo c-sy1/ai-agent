@@ -1,3 +1,4 @@
+import base64
 import os
 import re
 import time
@@ -13,7 +14,9 @@ load_dotenv(_ENV_PATH, override=True)
 GENERATED_ROOT = Path(__file__).resolve().parent / "generated"
 IMAGE_DIR = GENERATED_ROOT / "images"
 VIDEO_DIR = GENERATED_ROOT / "videos"
+UPLOAD_DIR = GENERATED_ROOT / "uploads"
 IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 
 DASHSCOPE_BASE = os.getenv(
@@ -493,6 +496,36 @@ def _save_image_url(url: str) -> str:
     dest = IMAGE_DIR / name
     _download(url, dest)
     return _public_path("images", name)
+
+
+def save_upload_image(image_base64: str) -> str:
+    """保存前端上传的 dataURL / base64 图片，返回 /generated/uploads/..."""
+    raw = (image_base64 or "").strip()
+    if not raw:
+        raise MediaError("请先上传照片")
+    mime = "image/jpeg"
+    if raw.startswith("data:"):
+        header, _, b64 = raw.partition(",")
+        if not b64:
+            raise MediaError("图片数据无效")
+        if "image/png" in header:
+            mime = "image/png"
+        elif "image/webp" in header:
+            mime = "image/webp"
+        raw = b64
+    try:
+        data = base64.b64decode(raw, validate=False)
+    except Exception as e:
+        raise MediaError("图片解码失败") from e
+    if len(data) < 32:
+        raise MediaError("图片过小或损坏")
+    if len(data) > 8 * 1024 * 1024:
+        raise MediaError("图片请小于 8MB")
+    ext = { "image/png": ".png", "image/webp": ".webp" }.get(mime, ".jpg")
+    name = f"{uuid.uuid4().hex}{ext}"
+    dest = UPLOAD_DIR / name
+    dest.write_bytes(data)
+    return _public_path("uploads", name)
 
 
 def _save_video_url(url: str) -> str:

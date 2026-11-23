@@ -9,6 +9,7 @@ from media_service import (
     generate_image,
     generate_video,
     resolve_media_prompt,
+    save_upload_image,
 )
 from ppt_service import format_pptx_answer, generate_pptx_file
 from quota_service import QuotaExceededError, require_and_consume
@@ -21,9 +22,22 @@ from vip_service import (
 
 DRAWING_TOOLS = {"AI灵魂画手", "幻彩画匠"}
 PPT_TOOLS = {"PPT狂飙"}
+PHOTO_KEYWORDS = ("照片", "拍照", "修图", "修复", "药品")
 
 
-def run_tool(db: Session, tool_id: int, user_id: int, user_input: str) -> dict:
+def _needs_photo(tool: Tool) -> bool:
+    name = tool.name or ""
+    desc = tool.description or ""
+    return any(k in name or k in desc for k in PHOTO_KEYWORDS)
+
+
+def run_tool(
+    db: Session,
+    tool_id: int,
+    user_id: int,
+    user_input: str,
+    image_base64: str | None = None,
+) -> dict:
     user = db.get(User, user_id)
     if user is None:
         raise ValueError("用户不存在")
@@ -35,6 +49,47 @@ def run_tool(db: Session, tool_id: int, user_id: int, user_input: str) -> dict:
     text = (user_input or "").strip()
     if not text:
         raise ValueError("请输入内容后再生成")
+
+    upload_url = None
+    if _needs_photo(tool):
+        if not (image_base64 or "").strip():
+            raise ValueError("请先上传照片，再描述要如何修复/处理")
+        upload_url = save_upload_image(image_base64)
+        require_and_consume(db, user, "image")
+        prompt = (
+            f"Photo restoration / enhancement result image. "
+            f"User request: {text}. "
+            "Natural lighting, clean details, realistic photo quality, no watermark."
+        )
+        try:
+            out_url = generate_image(prompt)
+        except MediaError:
+            raise
+        advice = generate_reply(
+            (
+                f"用户上传了一张照片，修复需求：{text}\n"
+                "请给出简洁的修复说明（3～6条），语气专业，不要否认已上传图片。"
+            ),
+            (
+                f"你是「{tool.name}」助手。{tool.description}"
+                "用户已经上传照片，请基于需求给修复建议。"
+            ),
+            tool_name=tool.name,
+        )
+        output = (
+            f"{advice}\n\n"
+            f"已收到你的原图：{upload_url}\n\n"
+            f"{format_image_answer(out_url, text)}"
+        )
+        return {
+            "tool_id": tool.id,
+            "tool_name": tool.name,
+            "input": text,
+            "output": output,
+            "media_url": out_url,
+            "upload_url": upload_url,
+            "media_type": "image",
+        }
 
     if tool.name in DRAWING_TOOLS or "画" in tool.name:
         prompt = resolve_media_prompt(text, [], "image")

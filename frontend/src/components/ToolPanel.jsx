@@ -2,23 +2,57 @@ import { useEffect, useState } from "react";
 import { api, getSession, resolveAssetUrl } from "../api";
 import RichContent from "./RichContent";
 
+function needsPhoto(tool) {
+  const s = `${tool?.name || ""}${tool?.description || ""}`;
+  return /照片|拍照|修图|修复|药品/.test(s);
+}
+
 export default function ToolPanel({ tool, onClose }) {
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
   const [fileUrl, setFileUrl] = useState("");
   const [filename, setFilename] = useState("");
+  const [mediaUrl, setMediaUrl] = useState("");
+  const [preview, setPreview] = useState("");
+  const [imageBase64, setImageBase64] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const photoRequired = needsPhoto(tool);
 
   useEffect(() => {
     setInput("");
     setOutput("");
     setFileUrl("");
     setFilename("");
+    setMediaUrl("");
+    setPreview("");
+    setImageBase64("");
     setError("");
   }, [tool?.id]);
 
   if (!tool) return null;
+
+  const onPickFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setError("请上传图片文件（jpg/png/webp）");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setError("图片请小于 8MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      setImageBase64(dataUrl);
+      setPreview(dataUrl);
+      setError("");
+    };
+    reader.onerror = () => setError("读取图片失败");
+    reader.readAsDataURL(file);
+  };
 
   const run = async () => {
     const user = getSession();
@@ -26,17 +60,26 @@ export default function ToolPanel({ tool, onClose }) {
       setError("请先登录");
       return;
     }
+    if (photoRequired && !imageBase64) {
+      setError("请先上传照片");
+      return;
+    }
     setLoading(true);
     setError("");
     setFileUrl("");
     setFilename("");
+    setMediaUrl("");
     try {
       const res = await api.invokeTool(tool.id, {
         user_id: user.user_id,
         input,
+        image_base64: photoRequired ? imageBase64 : undefined,
       });
       const out = res.data.output || "";
       setOutput(out);
+      if (res.data.media_url) {
+        setMediaUrl(resolveAssetUrl(res.data.media_url));
+      }
       let url = res.data.file_url || "";
       let name = res.data.filename || "";
       if (!url) {
@@ -77,7 +120,23 @@ export default function ToolPanel({ tool, onClose }) {
           </button>
         </div>
 
-        <label className="tool-modal-label">输入</label>
+        {photoRequired && (
+          <>
+            <label className="tool-modal-label">上传照片</label>
+            <div className="tool-upload">
+              <input type="file" accept="image/*" onChange={onPickFile} />
+              {preview ? (
+                <img src={preview} alt="预览" className="tool-upload-preview" />
+              ) : (
+                <p className="profile-desc" style={{ margin: "8px 0 0" }}>
+                  必须上传一张照片后再生成
+                </p>
+              )}
+            </div>
+          </>
+        )}
+
+        <label className="tool-modal-label">{photoRequired ? "修复需求" : "输入"}</label>
         <textarea
           className="tool-modal-input"
           rows={5}
@@ -110,6 +169,13 @@ export default function ToolPanel({ tool, onClose }) {
             <a className="btn-primary" href={fileUrl} download={filename || "ApexAI.pptx"}>
               下载 PPT
             </a>
+          </div>
+        )}
+
+        {mediaUrl && (
+          <div style={{ marginTop: 12 }}>
+            <label className="tool-modal-label">效果图</label>
+            <img src={mediaUrl} alt="生成结果" className="tool-upload-preview" />
           </div>
         )}
 

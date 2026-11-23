@@ -87,6 +87,7 @@ class ConversationCreateReq(BaseModel):
 class ToolInvokeReq(BaseModel):
     user_id: int
     input: str
+    image_base64: str | None = None
 
 
 class ConversationUpdateReq(BaseModel):
@@ -339,7 +340,7 @@ def get_tool(tool_id: int, db: Session = Depends(get_db)):
 @app.post("/api/tools/{tool_id}/invoke")
 def invoke_tool(tool_id: int, req: ToolInvokeReq, db: Session = Depends(get_db)):
     try:
-        data = run_tool(db, tool_id, req.user_id, req.input)
+        data = run_tool(db, tool_id, req.user_id, req.input, req.image_base64)
     except QuotaExceededError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
     except VipRequiredError as e:
