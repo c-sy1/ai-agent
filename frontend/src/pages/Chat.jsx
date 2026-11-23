@@ -173,7 +173,7 @@ export default function Chat() {
       });
       await loadHistory();
     } catch (e) {
-      alert(e.message || "置顶操作失败，请重启「打开 Apex AI.bat」后再试");
+      alert(e.message || "置顶操作失败，请稍后重试");
     }
   };
 

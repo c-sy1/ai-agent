@@ -38,8 +38,13 @@ export default function ChatFooter({ conversationId, onSent }) {
       setActiveCid(cid);
       if (!conversationId) navigate(`/chat/${cid}`, { replace: true });
       onSent?.(cid);
-    } catch {
-      setError("发送失败：请双击桌面上的「打开 Apex AI.bat」，等浏览器打开后再试");
+    } catch (e) {
+      const msg = (e && e.message) || "";
+      setError(
+        msg
+          ? `发送失败：${msg}`
+          : "发送失败：服务暂时不可用，请稍后重试；若一直失败请联系管理员检查服务器是否在运行。"
+      );
       if (typed) setText(q);
     } finally {
       setSending(false);
