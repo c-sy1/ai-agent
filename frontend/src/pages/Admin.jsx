@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, getSession } from "../api";
 
 export default function Admin() {
@@ -73,7 +73,19 @@ export default function Admin() {
   };
 
   return (
-    <div className="page-scroll profile-page">
+    <div className="admin-shell">
+      <header className="admin-topbar">
+        <div className="admin-topbar-brand">Apex AI · 管理后台</div>
+        <div className="admin-topbar-actions">
+          <Link to="/profile" className="logout-btn">
+            返回个人主页
+          </Link>
+          <Link to="/" className="logout-btn">
+            回工作台
+          </Link>
+        </div>
+      </header>
+      <div className="page-scroll profile-page admin-body">
       <div className="card profile-hero">
         <div>
           <h1 style={{ margin: "0 0 6px" }}>管理后台</h1>
@@ -166,6 +178,7 @@ export default function Admin() {
           </div>
         </>
       )}
+      </div>
     </div>
   );
 }

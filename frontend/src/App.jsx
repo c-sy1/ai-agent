@@ -32,8 +32,15 @@ export default function App() {
         <Route path="chat" element={<Chat />} />
         <Route path="chat/:conversationId" element={<Chat />} />
         <Route path="profile" element={<Profile />} />
-        <Route path="admin" element={<Admin />} />
       </Route>
+      <Route
+        path="/admin"
+        element={
+          <RequireAuth>
+            <Admin />
+          </RequireAuth>
+        }
+      />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

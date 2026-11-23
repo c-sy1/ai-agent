@@ -36,11 +36,6 @@ export default function AppLayout() {
           >
             网页版对话记录
           </NavLink>
-          {user?.is_admin ? (
-            <NavLink to="/admin" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
-              🛠 管理后台
-            </NavLink>
-          ) : null}
           <span className="nav-item nav-sub" style={{ opacity: 0.5 }}>
             APP 对话记录
           </span>
