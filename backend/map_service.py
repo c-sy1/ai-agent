@@ -15,9 +15,9 @@ load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 PLACE_LIBRARY: dict[str, dict[str, Any]] = {
     "保定理工学院": {
         "name": "保定理工学院",
-        "lng": 115.5124,
-        "lat": 38.8368,
-        "address": "河北省保定市莲池区南二环路1689号",
+        "lng": 115.485083,
+        "lat": 38.814709,
+        "address": "河北省保定市南大园乡南二环1689号",
         "aliases": ["保理学院", "保定理工", "中国地质大学长城学院"],
     },
     "保定": {
