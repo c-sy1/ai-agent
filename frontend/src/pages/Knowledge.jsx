@@ -3,6 +3,12 @@ import { api } from "../api";
 
 const CATS = ["全部", "红色文化", "景点介绍", "历史人文"];
 
+const CAT_TONE = {
+  红色文化: "tone-red",
+  景点介绍: "tone-green",
+  历史人文: "tone-amber",
+};
+
 export default function Knowledge() {
   const [category, setCategory] = useState("全部");
   const [docs, setDocs] = useState([]);
@@ -12,6 +18,8 @@ export default function Knowledge() {
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [expanded, setExpanded] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -33,6 +41,7 @@ export default function Knowledge() {
   const create = async () => {
     setError("");
     setOk("");
+    setSaving(true);
     try {
       await api.knowledgeCreate({
         title: title.trim(),
@@ -41,10 +50,12 @@ export default function Knowledge() {
       });
       setTitle("");
       setContent("");
-      setOk("已入库");
+      setOk("已保存到知识库");
       load();
     } catch (e) {
       setError(e.message || "保存失败");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -52,6 +63,7 @@ export default function Knowledge() {
     if (!window.confirm("确定删除该文档？")) return;
     try {
       await api.knowledgeRemove(id);
+      if (expanded === id) setExpanded(null);
       load();
     } catch (e) {
       setError(e.message || "删除失败");
@@ -59,51 +71,68 @@ export default function Knowledge() {
   };
 
   return (
-    <div className="page-scroll">
-      <div className="hero">
-        <h1>文旅知识库</h1>
-        <p style={{ color: "#636e72", marginTop: 8 }}>
-          按分类管理资料；对话时会自动检索相关文档辅助回答。
-        </p>
-      </div>
-
-      <div className="card profile-form" style={{ marginBottom: 16 }}>
-        <h2 className="panel-title">上传文档</h2>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-          <select value={newCat} onChange={(e) => setNewCat(e.target.value)}>
-            {CATS.filter((c) => c !== "全部").map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-          <input
-            style={{ flex: 1, minWidth: 160 }}
-            placeholder="标题"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
+    <div className="page-scroll kb-page">
+      <header className="kb-header">
+        <div>
+          <p className="kb-eyebrow">Culture & Tourism</p>
+          <h1>文旅知识库</h1>
+          <p className="kb-lead">资料按分类入库，对话时自动检索相关内容作答。</p>
         </div>
+        <div className="kb-stat">
+          <strong>{docs.length}</strong>
+          <span>{category === "全部" ? "篇文档" : "篇 · 当前分类"}</span>
+        </div>
+      </header>
+
+      <section className="kb-composer">
+        <div className="kb-composer-top">
+          <h2>新增资料</h2>
+          <div className="kb-cat-select">
+            {CATS.filter((c) => c !== "全部").map((c) => (
+              <button
+                key={c}
+                type="button"
+                className={`kb-mini-tab${newCat === c ? " on" : ""}`}
+                onClick={() => setNewCat(c)}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+        <input
+          className="kb-input"
+          placeholder="标题，例如：白洋淀游船须知"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
         <textarea
-          rows={5}
-          placeholder="粘贴景点介绍、红色故事、历史人文等内容…"
+          className="kb-textarea"
+          rows={4}
+          placeholder="粘贴正文：景点介绍、红色故事、历史人文…"
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          style={{ width: "100%", marginBottom: 8 }}
         />
-        <button type="button" className="btn-primary" onClick={create}>
-          保存到知识库
-        </button>
-        {ok && <p style={{ color: "#0b6e4f" }}>{ok}</p>}
-        {error && <p style={{ color: "#c0392b" }}>{error}</p>}
-      </div>
+        <div className="kb-composer-actions">
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={saving || !title.trim() || !content.trim()}
+            onClick={create}
+          >
+            {saving ? "保存中…" : "保存"}
+          </button>
+          {ok && <span className="kb-ok">{ok}</span>}
+          {error && <span className="kb-err">{error}</span>}
+        </div>
+      </section>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+      <div className="kb-filter">
         {CATS.map((c) => (
           <button
             key={c}
             type="button"
-            className={`chip${category === c ? " active" : ""}`}
+            className={`kb-filter-btn${category === c ? " on" : ""}`}
             onClick={() => setCategory(c)}
           >
             {c}
@@ -111,25 +140,32 @@ export default function Knowledge() {
         ))}
       </div>
 
-      {loading && <p style={{ color: "#636e72" }}>加载中…</p>}
-      <div className="tool-grid-sm">
-        {docs.map((d) => (
-          <div key={d.id} className="card tool-sm-card">
-            <div>
-              <span className="chip">{d.category}</span>
-              <strong style={{ display: "block", marginTop: 8 }}>{d.title}</strong>
-              <p style={{ margin: "8px 0", fontSize: 13, color: "#636e72", whiteSpace: "pre-wrap" }}>
-                {d.content.slice(0, 180)}
-                {d.content.length > 180 ? "…" : ""}
-              </p>
-              <button type="button" className="logout-btn" onClick={() => remove(d.id)}>
-                删除
+      {loading && <p className="kb-muted">加载中…</p>}
+
+      <div className="kb-list">
+        {docs.map((d) => {
+          const open = expanded === d.id;
+          return (
+            <article key={d.id} className={`kb-item${open ? " open" : ""}`}>
+              <button type="button" className="kb-item-main" onClick={() => setExpanded(open ? null : d.id)}>
+                <span className={`kb-tag ${CAT_TONE[d.category] || ""}`}>{d.category}</span>
+                <div className="kb-item-text">
+                  <h3>{d.title}</h3>
+                  <p>{open ? d.content : `${d.content.slice(0, 90)}${d.content.length > 90 ? "…" : ""}`}</p>
+                </div>
+                <span className="kb-chevron">{open ? "收起" : "展开"}</span>
               </button>
-            </div>
-          </div>
-        ))}
+              <div className="kb-item-actions">
+                <button type="button" className="kb-del" onClick={() => remove(d.id)}>
+                  删除
+                </button>
+              </div>
+            </article>
+          );
+        })}
       </div>
-      {!loading && docs.length === 0 && <p style={{ color: "#636e72" }}>该分类暂无文档</p>}
+
+      {!loading && docs.length === 0 && <p className="kb-muted">该分类暂无文档，上方可新增。</p>}
     </div>
   );
 }
