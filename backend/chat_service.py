@@ -22,7 +22,7 @@ from media_service import (
     video_prompt_lacks_scene,
 )
 from quota_service import QuotaExceededError, require_and_consume
-from map_service import format_map_answer, try_resolve_map
+from map_service import format_map_answer, format_map_error, try_resolve_map
 from search_service import fetch_search, is_search_question
 from vip_service import VIP_FEATURE_VIDEO, VipRequiredError, require_vip
 from weather_service import fetch_weather, is_weather_question
@@ -219,13 +219,16 @@ def chat_in_conversation(
                 f"🔒 {e}\n\n"
                 "开通入口：左下角进入「个人主页」选择套餐充值。"
             )
-    # 地图工具：内置地点坐标（保定 / 白洋淀 / 狼牙山）
+    # 地图工具：内置坐标优先，否则高德实时检索任意地点
     if answer is None:
         point = try_resolve_map(question)
         if point is not None:
             try:
                 require_and_consume(db, user, "chat")
-                answer = format_map_answer(point)
+                if point.get("_error"):
+                    answer = format_map_error(str(point["_error"]))
+                else:
+                    answer = format_map_answer(point)
             except QuotaExceededError as e:
                 answer = (
                     f"🔒 {e}\n\n"

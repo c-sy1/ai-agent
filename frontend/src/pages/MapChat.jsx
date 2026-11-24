@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { api, getSession } from "../api";
 import RichContent from "../components/RichContent";
 
-const QUICK = ["保定理工学院位置", "白洋淀在哪？", "狼牙山坐标"];
+const QUICK = ["保定理工学院位置", "天安门在哪", "白洋淀在哪？"];
 
 function loadAmapScript(key, securityCode) {
   return new Promise((resolve, reject) => {
@@ -42,6 +42,7 @@ export default function MapChat() {
   const [mapHint, setMapHint] = useState("地图加载中…");
   const [cid, setCid] = useState(null);
   const [places, setPlaces] = useState([]);
+  const [realtime, setRealtime] = useState(false);
   const mapRef = useRef(null);
   const mapInst = useRef(null);
   const markersRef = useRef([]);
@@ -72,6 +73,7 @@ export default function MapChat() {
         const cfg = await api.mapConfig();
         if (cancelled) return;
         setPlaces(cfg.data?.places || []);
+        setRealtime(Boolean(cfg.data?.realtime));
         const key = (cfg.data?.amap_js_key || "").trim();
         if (!key) {
           setMapHint("未配置 AMAP_JS_KEY：请在 backend/.env 填写高德 Web端(JS API) Key 后重启");
@@ -196,7 +198,11 @@ export default function MapChat() {
         <div className="map-chat-head">
           <div>
             <h1>地图工具</h1>
-            <p>内置：保定理工学院 · 保定 · 白洋淀 · 狼牙山</p>
+            <p>
+              {realtime
+                ? "已开通实时检索：任意地点都可定位"
+                : "常用点内置；配置 AMAP_WEB_KEY 后可检索任意地点"}
+            </p>
           </div>
           <Link to="/toolbox" className="map-back">
             ← 工具箱

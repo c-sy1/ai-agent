@@ -26,7 +26,7 @@ from auth_service import (
 )
 from chat_service import chat_in_conversation
 from tool_service import run_tool, run_media
-from map_service import geocode_place, list_places, parse_map_marker
+from map_service import geocode_place, list_places, parse_map_marker, realtime_enabled
 
 from media_service import GENERATED_ROOT, MediaError
 from database import (
@@ -633,7 +633,7 @@ def health():
 
 @app.get("/api/map/config")
 def map_config(auth: User = Depends(get_current_user)):
-    """前端加载高德 JS API 所需 Key（仅显示用地图，不用地理编码 API）。"""
+    """前端 JS Key + 是否已开通实时检索。"""
     key = (os.getenv("AMAP_JS_KEY") or os.getenv("VITE_AMAP_KEY") or "").strip()
     return {
         "code": 200,
@@ -641,6 +641,7 @@ def map_config(auth: User = Depends(get_current_user)):
             "amap_js_key": key,
             "security_js_code": (os.getenv("AMAP_SECURITY_JS_CODE") or "").strip(),
             "places": list_places(),
+            "realtime": realtime_enabled(),
         },
     }
 
@@ -655,7 +656,7 @@ def map_geocode(
     req: MapGeocodeReq,
     auth: User = Depends(get_current_user),
 ):
-    """内置地点坐标库查询（保定 / 白洋淀 / 狼牙山），不调用高德地理编码。"""
+    """内置坐标优先；未命中则用高德 Web服务实时检索（需 AMAP_WEB_KEY）。"""
     try:
         point = geocode_place(req.place)
     except ValueError as e:

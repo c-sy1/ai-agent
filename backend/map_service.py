@@ -1,22 +1,24 @@
-"""地图工具：内置地点坐标库（不走高德地理编码，避免额度）。"""
+"""地图工具：内置坐标优先，未命中则走高德 Web 服务实时检索。"""
 from __future__ import annotations
 
+import os
 import re
+from pathlib import Path
 from typing import Any
 
-# 经纬度：高德/国测局 GCJ-02 常用点位（录屏可真实落点）
+import httpx
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
+
+# 经纬度：高德/国测局 GCJ-02（常用点，免额度）
 PLACE_LIBRARY: dict[str, dict[str, Any]] = {
-    # 更具体的地点放前面无关：匹配时按别名长度优先，避免「保定」抢走「保定理工学院」
     "保定理工学院": {
         "name": "保定理工学院",
         "lng": 115.5124,
         "lat": 38.8368,
         "address": "河北省保定市莲池区南二环路1689号",
-        "aliases": [
-            "保理学院",
-            "保定理工",
-            "中国地质大学长城学院",  # 曾用名
-        ],
+        "aliases": ["保理学院", "保定理工", "中国地质大学长城学院"],
     },
     "保定": {
         "name": "保定",
@@ -42,9 +44,26 @@ PLACE_LIBRARY: dict[str, dict[str, Any]] = {
 }
 
 _GEO_HINT = re.compile(
-    r"(在哪|哪里|哪儿|位置|坐标|地图|定位|点位|怎么走|导航|经纬度|打卡)",
+    r"(在哪|哪里|哪儿|位置|坐标|地图|定位|点位|怎么走|导航|经纬度|打卡|地址)",
     re.I,
 )
+
+_NOISE_PREFIX = re.compile(
+    r"^(请问|帮我|麻烦|我想|请您?|查一下|帮查|搜索|查询|找一下|看一下)+"
+)
+
+
+def amap_web_key() -> str:
+    """Web服务 Key（地理编码 / 关键词检索），与前端 JS Key 不同。"""
+    return (
+        os.getenv("AMAP_WEB_KEY")
+        or os.getenv("AMAP_GEOCODE_KEY")
+        or ""
+    ).strip()
+
+
+def realtime_enabled() -> bool:
+    return bool(amap_web_key())
 
 
 def list_places() -> list[dict]:
@@ -66,12 +85,12 @@ def _alias_index() -> list[tuple[str, str]]:
         pairs.append((key, key))
         for a in meta.get("aliases") or []:
             pairs.append((a, key))
-    # 长词优先，避免短词误伤
     pairs.sort(key=lambda x: len(x[0]), reverse=True)
     return pairs
 
 
 def extract_place_name(text: str) -> str | None:
+    """命中内置库时返回库 key。"""
     t = (text or "").strip()
     if not t:
         return None
@@ -81,49 +100,51 @@ def extract_place_name(text: str) -> str | None:
     return None
 
 
+def extract_query_text(text: str) -> str:
+    """从自然语言抽出待检索地名。"""
+    builtin = extract_place_name(text)
+    if builtin:
+        return PLACE_LIBRARY[builtin]["name"]
+    t = (text or "").strip()
+    t = _NOISE_PREFIX.sub("", t)
+    t = _GEO_HINT.sub("", t)
+    t = re.sub(r"[？?。！!，,、：:\s]+", "", t)
+    for noise in ("一下", "看看", "告诉我", "是多少", "在", "的"):
+        if t.endswith(noise) and len(t) > len(noise) + 1:
+            t = t[: -len(noise)]
+    return t.strip()
+
+
 def is_map_question(text: str) -> bool:
-    """是否像地理位置提问：含内置地名，且带定位意图（避免抢天气等问题）。"""
+    """地理位置提问：内置地名，或「xx在哪」类实时检索意图。"""
     t = (text or "").strip()
     if not t:
         return False
-    # 天气/穿搭留给对应能力
     if any(k in t for k in ("天气", "气温", "下雨", "穿什么", "穿搭", "多少度")):
         return False
-    place = extract_place_name(t)
-    if not place:
-        return False
-    if _GEO_HINT.search(t):
+
+    builtin = extract_place_name(t)
+    if builtin and _GEO_HINT.search(t):
         return True
-    if any(k in t for k in ("介绍", "看看", "打开", "显示", "标记", "定位")):
+    if builtin and any(k in t for k in ("介绍", "看看", "打开", "显示", "标记", "定位")):
         return True
-    # 仅地名本身 / 地名+语气词
     stripped = re.sub(r"[？?。！!\s哟啊呢吗嘛]", "", t)
     if stripped in PLACE_LIBRARY:
         return True
-    for alias, key in _alias_index():
+    for alias, _key in _alias_index():
         if stripped == alias:
+            return True
+
+    # 实时：带定位意图词，且抽得出地名
+    if _GEO_HINT.search(t):
+        q = extract_query_text(t)
+        if len(q) >= 2:
             return True
     return False
 
 
-def geocode_place(place: str) -> dict:
-    """根据地名返回坐标。未命中抛 ValueError。"""
-    raw = (place or "").strip()
-    if not raw:
-        raise ValueError("请提供地名，例如：保定、白洋淀、狼牙山")
-
-    key = extract_place_name(raw) or raw
-    # 允许直接传标准名
-    if key not in PLACE_LIBRARY:
-        for alias, k in _alias_index():
-            if alias == raw or alias in raw:
-                key = k
-                break
-    meta = PLACE_LIBRARY.get(key)
-    if meta is None:
-        supported = "、".join(PLACE_LIBRARY.keys())
-        raise ValueError(f"暂不支持该地点。当前内置：{supported}")
-
+def _builtin_point(key: str) -> dict:
+    meta = PLACE_LIBRARY[key]
     return {
         "name": meta["name"],
         "lng": float(meta["lng"]),
@@ -133,14 +154,164 @@ def geocode_place(place: str) -> dict:
     }
 
 
+def _parse_location(loc: str) -> tuple[float, float] | None:
+    parts = (loc or "").split(",")
+    if len(parts) != 2:
+        return None
+    try:
+        return float(parts[0]), float(parts[1])
+    except ValueError:
+        return None
+
+
+def _amap_get(url: str, params: dict) -> dict:
+    with httpx.Client(timeout=12.0) as client:
+        r = client.get(url, params=params)
+        return r.json()
+
+
+def _raise_amap_status(data: dict, query: str) -> None:
+    info = (data.get("info") or "").upper()
+    if info in ("INVALID_USER_KEY", "USERKEY_PLAT_NOMATCH"):
+        raise ValueError(
+            "高德 Web服务 Key 无效或类型不对。请确认 backend/.env 的 "
+            "AMAP_WEB_KEY 是「Web服务」类型（不要填 JS Key）。"
+        )
+    if info in ("DAILY_QUERY_OVER_LIMIT", "ACCESS_TOO_FREQUENT", "CUQPS_HAS_EXCEEDED_THE_LIMIT"):
+        raise ValueError("高德调用超限，请稍后再试或提升配额。")
+    if str(data.get("status")) != "1" and info and info not in ("OK", "ENGINE_RESPONSE_DATA_ERROR"):
+        # 无结果时 status 也可能是 1 + 空列表；其它错误直接抛
+        if info not in ("", "UNKNOWN_ERROR"):
+            raise ValueError(f"高德检索失败（{data.get('info')}）：{query}")
+
+
+def _amap_place_search(query: str, key: str) -> dict | None:
+    """关键词 POI 检索（适合学校、景点、商场等）。"""
+    data = _amap_get(
+        "https://restapi.amap.com/v3/place/text",
+        {
+            "key": key,
+            "keywords": query,
+            "offset": 1,
+            "page": 1,
+            "extensions": "base",
+        },
+    )
+    if str(data.get("status")) != "1":
+        _raise_amap_status(data, query)
+        return None
+    pois = data.get("pois") or []
+    if not pois:
+        return None
+    poi = pois[0]
+    xy = _parse_location(poi.get("location") or "")
+    if not xy:
+        return None
+    name = (poi.get("name") or query).strip()
+    addr = (poi.get("address") or "").strip()
+    if isinstance(addr, list):
+        addr = "".join(str(x) for x in addr)
+    city = (poi.get("cityname") or poi.get("pname") or "").strip()
+    if isinstance(city, list):
+        city = "".join(str(x) for x in city)
+    if city and addr and city not in addr:
+        addr = f"{city}{addr}"
+    elif not addr:
+        addr = city or name
+    return {
+        "name": name,
+        "lng": xy[0],
+        "lat": xy[1],
+        "address": addr,
+        "source": "amap_poi",
+    }
+
+
+def _amap_geocode(query: str, key: str) -> dict | None:
+    """地址地理编码。"""
+    data = _amap_get(
+        "https://restapi.amap.com/v3/geocode/geo",
+        {"key": key, "address": query},
+    )
+    if str(data.get("status")) != "1":
+        _raise_amap_status(data, query)
+        return None
+    geos = data.get("geocodes") or []
+    if not geos:
+        return None
+    g = geos[0]
+    xy = _parse_location(g.get("location") or "")
+    if not xy:
+        return None
+    addr = (g.get("formatted_address") or query).strip()
+    if isinstance(addr, list):
+        addr = "".join(str(x) for x in addr)
+    name = query.strip() or addr
+    return {
+        "name": name,
+        "lng": xy[0],
+        "lat": xy[1],
+        "address": addr,
+        "source": "amap_geo",
+    }
+
+
+def amap_realtime(query: str) -> dict:
+    key = amap_web_key()
+    if not key:
+        raise ValueError(
+            "未配置 AMAP_WEB_KEY（高德控制台「Web服务」类型 Key）。"
+            "配置后即可实时检索任意地点。"
+        )
+    q = (query or "").strip()
+    if len(q) < 2:
+        raise ValueError("请提供更完整的地名")
+
+    point = _amap_place_search(q, key)
+    if point is None:
+        point = _amap_geocode(q, key)
+    if point is None:
+        raise ValueError(f"未找到「{q}」，请换个更具体的名称再试")
+    return point
+
+
+def geocode_place(place: str) -> dict:
+    """内置库优先，否则高德实时检索。"""
+    raw = (place or "").strip()
+    if not raw:
+        raise ValueError("请提供地名")
+
+    builtin_key = extract_place_name(raw)
+    if builtin_key and builtin_key in PLACE_LIBRARY:
+        # 用户明确说了更长内置名，或查询本身就是内置名
+        return _builtin_point(builtin_key)
+
+    query = extract_query_text(raw) or raw
+    # 再扫一次内置（抽词后可能正好是库内名）
+    builtin_key = extract_place_name(query)
+    if builtin_key and query in (
+        PLACE_LIBRARY[builtin_key]["name"],
+        builtin_key,
+        *PLACE_LIBRARY[builtin_key].get("aliases", []),
+    ):
+        return _builtin_point(builtin_key)
+
+    return amap_realtime(query)
+
+
 def format_map_answer(point: dict) -> str:
     name = point["name"]
     lng = point["lng"]
     lat = point["lat"]
     addr = point.get("address") or ""
-    # 前端解析：[[map:lng,lat,name]]
+    src = point.get("source") or ""
+    src_tip = {
+        "builtin": "内置坐标",
+        "amap_poi": "高德实时检索",
+        "amap_geo": "高德地理编码",
+    }.get(src, "地图服务")
     return (
-        f"已为你定位到 **{name}**。\n\n"
+        f"已为你定位到 **{name}**（{src_tip}）。\n\n"
         f"- 地址：{addr}\n"
         f"- 经度：{lng}\n"
         f"- 纬度：{lat}\n\n"
@@ -150,13 +321,22 @@ def format_map_answer(point: dict) -> str:
 
 
 def try_resolve_map(question: str) -> dict | None:
-    """对话侧：若命中地图意图则返回坐标结果，否则 None。"""
+    """对话侧：地图意图则解析坐标；失败时返回带说明的伪结果由上层当 answer。"""
     if not is_map_question(question):
         return None
-    place = extract_place_name(question)
-    if not place:
-        return None
-    return geocode_place(place)
+    try:
+        return geocode_place(question)
+    except ValueError as e:
+        # 让 chat 仍能回复可读错误，而不是静默走 LLM
+        return {"_error": str(e)}
+
+
+def format_map_error(err: str) -> str:
+    return (
+        f"⚠️ 定位失败\n\n{err}\n\n"
+        "可试：更具体的地名（城市+地点），或检查服务器是否配置了 "
+        "`AMAP_WEB_KEY`（高德 Web服务 Key）。"
+    )
 
 
 _MAP_MARKER_RE = re.compile(
