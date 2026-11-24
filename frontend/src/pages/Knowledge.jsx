@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
 
-const CATS = ["全部", "红色文化", "景点介绍", "历史人文"];
+const CATS = ["全部", "使用说明", "业务资料", "常见问题"];
 
 const CAT_TONE = {
-  红色文化: "tone-red",
-  景点介绍: "tone-green",
-  历史人文: "tone-amber",
+  使用说明: "tone-green",
+  业务资料: "tone-amber",
+  常见问题: "tone-red",
 };
 
 export default function Knowledge() {
@@ -14,7 +15,7 @@ export default function Knowledge() {
   const [docs, setDocs] = useState([]);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
-  const [newCat, setNewCat] = useState("景点介绍");
+  const [newCat, setNewCat] = useState("业务资料");
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
   const [loading, setLoading] = useState(true);
@@ -74,11 +75,11 @@ export default function Knowledge() {
     <div className="page-scroll kb-page">
       <header className="kb-header">
         <div>
-          <p className="kb-eyebrow">Culture & Tourism</p>
-          <h1>文旅知识库</h1>
+          <p className="kb-eyebrow">Knowledge</p>
+          <h1>知识库</h1>
           <p className="kb-lead">
-            这里存放保定文旅资料。你在「对话 / 地图」里问狼牙山、白洋淀、西大街等时，
-            系统会自动检索本库，并在回答末尾标注「已参考文旅知识库」。
+            存放产品说明、业务口径、FAQ 等资料。对话时按关键词自动检索，并在回答末尾标注来源。
+            可先存一篇，再去 <Link to="/chat">对话</Link> 提问验证。
           </p>
         </div>
         <div className="kb-stat">
@@ -105,14 +106,14 @@ export default function Knowledge() {
         </div>
         <input
           className="kb-input"
-          placeholder="标题，例如：白洋淀游船须知"
+          placeholder="标题，例如：VIP 套餐说明"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
         />
         <textarea
           className="kb-textarea"
           rows={4}
-          placeholder="粘贴正文：景点介绍、红色故事、历史人文…"
+          placeholder="粘贴正文：使用说明、业务资料、常见问题…"
           value={content}
           onChange={(e) => setContent(e.target.value)}
         />
@@ -150,11 +151,19 @@ export default function Knowledge() {
           const open = expanded === d.id;
           return (
             <article key={d.id} className={`kb-item${open ? " open" : ""}`}>
-              <button type="button" className="kb-item-main" onClick={() => setExpanded(open ? null : d.id)}>
+              <button
+                type="button"
+                className="kb-item-main"
+                onClick={() => setExpanded(open ? null : d.id)}
+              >
                 <span className={`kb-tag ${CAT_TONE[d.category] || ""}`}>{d.category}</span>
                 <div className="kb-item-text">
                   <h3>{d.title}</h3>
-                  <p>{open ? d.content : `${d.content.slice(0, 90)}${d.content.length > 90 ? "…" : ""}`}</p>
+                  <p>
+                    {open
+                      ? d.content
+                      : `${d.content.slice(0, 90)}${d.content.length > 90 ? "…" : ""}`}
+                  </p>
                 </div>
                 <span className="kb-chevron">{open ? "收起" : "展开"}</span>
               </button>
@@ -168,7 +177,9 @@ export default function Knowledge() {
         })}
       </div>
 
-      {!loading && docs.length === 0 && <p className="kb-muted">该分类暂无文档，上方可新增。</p>}
+      {!loading && docs.length === 0 && (
+        <p className="kb-muted">该分类暂无文档，上方可新增。</p>
+      )}
     </div>
   );
 }

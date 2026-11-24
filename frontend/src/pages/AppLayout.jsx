@@ -26,10 +26,10 @@ export default function AppLayout() {
             🧰 工具箱
           </NavLink>
           <NavLink to="/map" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
-            🗺️ 地图/路线
+            🗺️ 地图
           </NavLink>
           <NavLink to="/knowledge" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
-            📚 文旅知识库
+            📚 知识库
           </NavLink>
           <NavLink to="/agents" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
             🤖 智能体

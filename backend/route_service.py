@@ -1,16 +1,16 @@
-"""文旅路线工具：生成一日游行程，并按顺序输出地图打点标记。"""
+"""行程规划工具：生成一日游建议，并按顺序输出地图打点标记。"""
 from __future__ import annotations
 
 import re
 
-from map_service import amap_realtime, format_map_answer
+from map_service import amap_realtime
 
 _ROUTE_HINT = re.compile(
     r"(一日游|两日游|行程|路线规划|旅游路线|游玩路线|怎么玩|规划.*(游|行程|路线))",
     re.I,
 )
 
-# 保定文旅预设（可按关键词扩展）
+# 示例目的地预设（演示用，可继续扩展）
 _PRESETS: dict[str, list[dict]] = {
     "保定": [
         {"slot": "上午", "name": "直隶总督署博物馆", "tip": "了解清代直隶政治文化，建议1～1.5小时"},
@@ -75,7 +75,7 @@ def build_day_route(question: str) -> dict:
     """
     city, spots = _pick_preset(question)
     lines = [
-        f"已为你规划 **{city}一日游** 路线（文旅路线工具）。",
+        f"已为你规划 **{city}一日游** 路线（行程规划工具）。",
         "",
         "按时间顺序游览，右侧地图将依次标记景点：",
         "",
@@ -104,7 +104,7 @@ def build_day_route(question: str) -> dict:
 
     lines.append("---")
     lines.append("提示：门票/船班以当天景区公告为准；红色场馆请遵守参观秩序。")
-    lines.append("可继续问某个景点介绍，或说「换一条美食向路线」。")
+    lines.append("可继续追问某一站详情，或说「换成美食向路线」。")
 
     return {"answer": "\n".join(lines), "stops": stops, "city": city}
 

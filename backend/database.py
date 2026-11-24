@@ -236,12 +236,12 @@ class ChatFeedback(Base):
 
 
 class KnowledgeDoc(Base):
-    """文旅知识库文档（按分类）。"""
+    """知识库文档（按分类）。"""
 
     __tablename__ = "knowledge_docs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    category = Column(String(40), nullable=False, index=True)  # 红色文化/景点介绍/历史人文
+    category = Column(String(40), nullable=False, index=True)  # 使用说明/业务资料/常见问题
     title = Column(String(200), nullable=False)
     content = Column(Text, nullable=False)
     user_id = Column(Integer, nullable=False, default=0)

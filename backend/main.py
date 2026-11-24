@@ -1032,7 +1032,7 @@ class FeedbackReq(BaseModel):
 class KnowledgeCreateReq(BaseModel):
     title: str
     content: str
-    category: str = "景点介绍"
+    category: str = "业务资料"
 
 
 @app.post("/api/feedback")

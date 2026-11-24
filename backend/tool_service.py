@@ -26,7 +26,7 @@ from vip_service import (
 DRAWING_TOOLS = {"AI灵魂画手", "幻彩画匠"}
 PPT_TOOLS = {"PPT狂飙"}
 MAP_TOOLS = {"地图工具"}
-ROUTE_TOOLS = {"文旅路线规划"}
+ROUTE_TOOLS = {"行程规划", "文旅路线规划"}
 PHOTO_KEYWORDS = ("照片", "拍照", "修图", "修复", "药品")
 
 
@@ -126,7 +126,7 @@ def run_tool(
             "media_type": "map",
         }
 
-    if tool.name in ROUTE_TOOLS or "路线" in (tool.name or ""):
+    if tool.name in ROUTE_TOOLS or "路线" in (tool.name or "") or "行程" in (tool.name or ""):
         require_and_consume(db, user, "chat")
         q = text if is_route_question(text) else f"{text}一日游路线规划"
         try:

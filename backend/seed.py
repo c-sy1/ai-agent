@@ -77,6 +77,10 @@ def seed():
             for item in raw["tools"]:
                 db.add(_tool_from_json(item))
         else:
+            # 旧名迁移
+            legacy = db.query(Tool).filter(Tool.name == "文旅路线规划").first()
+            if legacy is not None:
+                legacy.name = "行程规划"
             for item in raw["tools"]:
                 row = db.query(Tool).filter(Tool.name == item["name"]).first()
                 if row is None:
@@ -87,6 +91,8 @@ def seed():
                     row.input_placeholder = item.get(
                         "input_placeholder", "请输入你的需求…"
                     )
+                    row.tag = item.get("tag", row.tag or "")
+                    row.icon = item.get("icon", row.icon or "🔧")
 
         if db.query(Agent).count() == 0:
             for item in raw["agents"]:

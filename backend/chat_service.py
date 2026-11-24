@@ -38,15 +38,12 @@ def _kb_search(db: Session, question: str) -> list[dict]:
     if not q:
         return []
     cat = None
-    if any(k in q for k in ("红色", "军校", "狼牙山", "抗战", "革命", "五勇士")):
-        cat = "红色文化"
-    elif any(
-        k in q
-        for k in ("景点", "景区", "公园", "博物馆", "白洋淀", "莲花池", "总督署", "西大街")
-    ):
-        cat = "景点介绍"
-    elif any(k in q for k in ("历史", "人文", "直隶", "文化", "街区")):
-        cat = "历史人文"
+    if any(k in q for k in ("怎么用", "如何使用", "使用说明", "功能", "地图怎么", "知识库")):
+        cat = "使用说明"
+    elif any(k in q for k in ("VIP", "vip", "会员", "验证码", "充值", "支付", "额度", "常见问题", "FAQ", "faq")):
+        cat = "常见问题"
+    elif any(k in q for k in ("业务", "口径", "资料", "说明", "须知", "白洋淀", "游船")):
+        cat = "业务资料"
 
     query = db.query(KnowledgeDoc)
     if cat:
@@ -101,7 +98,7 @@ def _kb_footer(hits: list[dict]) -> str:
     if not hits:
         return ""
     names = "、".join(f"「{h['title']}」" for h in hits)
-    return f"\n\n---\n📚 已参考文旅知识库：{names}"
+    return f"\n\n---\n📚 已参考知识库：{names}"
 
 PM_INTERVIEW_REPLY = """产品经理面试通常涵盖以下六大模块，建议逐条准备：
 
@@ -260,7 +257,7 @@ def chat_in_conversation(
         else (
             "你是 Apex AI 全能助手，用简洁清晰的中文回答。"
             "你会记住并使用当前会话中的历史消息来连贯对话。"
-            "若涉及保定文旅，可结合知识库资料回答，勿编造未提供的史实。"
+            "若知识库提供了相关资料，请优先依据资料回答，勿编造。"
         )
     )
     kb_hits = _kb_search(db, question)
@@ -269,7 +266,7 @@ def chat_in_conversation(
     )
     if kb:
         system_prompt += (
-            "\n\n【文旅知识库参考】请优先依据下列资料回答，可润色但不要编造资料外史实。\n"
+            "\n\n【知识库参考】请优先依据下列资料回答，可润色但不要编造资料外内容。\n"
             f"{kb}"
         )
 
@@ -305,7 +302,7 @@ def chat_in_conversation(
                 f"🔒 {e}\n\n"
                 "开通入口：左下角进入「个人主页」选择套餐充值。"
             )
-    # 文旅路线工具：一日游行程 + 多点地图标记
+    # 行程规划：一日游建议 + 多点地图标记
     if answer is None:
         route_ans = try_build_route(question)
         if route_ans is not None:
@@ -427,7 +424,7 @@ def chat_in_conversation(
                     answer = "\n\n".join(parts)
                 else:
                     answer = _demo_reply(question, agent)
-            if kb_hits and answer and "已参考文旅知识库" not in answer:
+            if kb_hits and answer and "已参考知识库" not in answer:
                 answer = answer.rstrip() + _kb_footer(kb_hits)
 
     db.add(
