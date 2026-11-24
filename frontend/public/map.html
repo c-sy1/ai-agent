@@ -134,8 +134,9 @@
 
       function loadAmap(key, security) {
         return new Promise((resolve, reject) => {
+          const code = (security || "").trim();
+          if (code) window._AMapSecurityConfig = { securityJsCode: code };
           if (window.AMap) return resolve(window.AMap);
-          if (security) window._AMapSecurityConfig = { securityJsCode: security };
           const s = document.createElement("script");
           s.src = "https://webapi.amap.com/maps?v=2.0&key=" + encodeURIComponent(key);
           s.onload = () => resolve(window.AMap);

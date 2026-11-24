@@ -7,12 +7,14 @@ const QUICK = ["白洋淀在哪？", "狼牙山坐标", "保定位置"];
 
 function loadAmapScript(key, securityCode) {
   return new Promise((resolve, reject) => {
+    // 必须在加载 JS API 之前设置，否则底图瓦片会灰屏（只有标记）
+    const code = (securityCode || "").trim();
+    if (code) {
+      window._AMapSecurityConfig = { securityJsCode: code };
+    }
     if (window.AMap) {
       resolve(window.AMap);
       return;
-    }
-    if (securityCode) {
-      window._AMapSecurityConfig = { securityJsCode: securityCode };
     }
     const existing = document.querySelector("script[data-amap]");
     if (existing) {
@@ -75,15 +77,33 @@ export default function MapChat() {
           setMapHint("未配置 AMAP_JS_KEY：请在 backend/.env 填写高德 Web端(JS API) Key 后重启");
           return;
         }
+        if (!(cfg.data?.security_js_code || "").trim()) {
+          setMapHint("缺少 AMAP_SECURITY_JS_CODE：底图会灰屏。请在服务器 backend/.env 填写安全密钥后重启");
+        }
         await loadAmapScript(key, cfg.data?.security_js_code);
         if (cancelled || !mapRef.current) return;
-        const map = new window.AMap.Map(mapRef.current, {
+        // 容器需有宽高后再初始化，否则也容易灰底
+        const el = mapRef.current;
+        if (!el.clientWidth || !el.clientHeight) {
+          el.style.minHeight = "420px";
+        }
+        const map = new window.AMap.Map(el, {
           zoom: 10,
           center: [115.4648, 38.8739],
           viewMode: "2D",
         });
         mapInst.current = map;
-        setMapHint("已就绪 · 试试问「白洋淀在哪」");
+        map.on("complete", () => {
+          map.resize();
+          setMapHint("已就绪 · 试试问「白洋淀在哪」");
+        });
+        // 监听鉴权失败（控制台常见 INVALID_USER_SCODE / DOMAIN）
+        map.on("error", (err) => {
+          setMapHint(
+            `底图加载失败：${err?.info || err?.type || "鉴权/白名单"}。请检查安全密钥与域名白名单`
+          );
+        });
+        setTimeout(() => map.resize(), 200);
         const list = cfg.data?.places || [];
         list.forEach((p) => {
           const m = new window.AMap.Marker({
