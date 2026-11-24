@@ -6,7 +6,7 @@ APP_DIR="${APP_DIR:-/opt/apex-ai}"
 cd "$APP_DIR"
 
 echo "[1/4] git pull"
-git pull
+git pull --ff-only || git pull
 
 echo "[2/4] 构建前端"
 cd "$APP_DIR/frontend"

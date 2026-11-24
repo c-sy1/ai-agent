@@ -52,6 +52,7 @@ stages:
     script: |-
       set -e
       cd /opt/apex-ai
+      git pull
       chmod +x deploy.sh
       bash deploy.sh
     hostGroupID:
