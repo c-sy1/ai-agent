@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { api, getSession } from "../api";
 import RichContent from "../components/RichContent";
 
-const QUICK = ["保定理工学院位置", "天安门在哪", "白洋淀在哪？"];
+const QUICK = ["保定西大街在哪", "保定理工学院位置", "天安门在哪"];
 
 function loadAmapScript(key, securityCode) {
   return new Promise((resolve, reject) => {
@@ -200,8 +200,8 @@ export default function MapChat() {
             <h1>地图工具</h1>
             <p>
               {realtime
-                ? "已开通实时检索：任意地点都可定位"
-                : "常用点内置；配置 AMAP_WEB_KEY 后可检索任意地点"}
+                ? "输入街道、学校、商场等具体地点，实时定位（不是只定位城市）"
+                : "请配置 AMAP_WEB_KEY 后可检索任意具体地点"}
             </p>
           </div>
           <Link to="/toolbox" className="map-back">
@@ -249,7 +249,7 @@ export default function MapChat() {
           <div className="composer-row">
             <textarea
               rows={2}
-              placeholder="问地点，如：狼牙山在哪"
+              placeholder="输入具体地点，如：保定西大街、某某路12号"
               value={text}
               disabled={sending}
               onChange={(e) => setText(e.target.value)}

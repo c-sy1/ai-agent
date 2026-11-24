@@ -197,17 +197,51 @@ def _raise_amap_status(data: dict, query: str) -> None:
             raise ValueError(f"高德检索失败（{data.get('info')}）：{query}")
 
 
+def _guess_city(query: str) -> str:
+    """从查询里带出城市，提高街道/小区检索精度。"""
+    q = query or ""
+    cities = (
+        "北京",
+        "上海",
+        "天津",
+        "重庆",
+        "保定",
+        "石家庄",
+        "邯郸",
+        "唐山",
+        "廊坊",
+        "沧州",
+        "张家口",
+        "承德",
+        "衡水",
+        "邢台",
+        "秦皇岛",
+    )
+    for city in cities:
+        if q.startswith(city) or q.startswith(city + "市"):
+            return city
+    # 「保定西大街」这类：城市在中间/开头但不整句等于城市名
+    for city in cities:
+        if city in q and q != city and q != city + "市":
+            return city
+    return ""
+
+
 def _amap_place_search(query: str, key: str) -> dict | None:
-    """关键词 POI 检索（适合学校、景点、商场等）。"""
+    """关键词 POI 检索（适合学校、景点、商场、街道等）。"""
+    params: dict[str, Any] = {
+        "key": key,
+        "keywords": query,
+        "offset": 1,
+        "page": 1,
+        "extensions": "base",
+    }
+    city = _guess_city(query)
+    if city:
+        params["city"] = city
     data = _amap_get(
         "https://restapi.amap.com/v3/place/text",
-        {
-            "key": key,
-            "keywords": query,
-            "offset": 1,
-            "page": 1,
-            "extensions": "base",
-        },
+        params,
     )
     if str(data.get("status")) != "1":
         _raise_amap_status(data, query)
@@ -279,22 +313,26 @@ def amap_realtime(query: str) -> dict:
     if len(q) < 2:
         raise ValueError("请提供更完整的地名")
 
-    point = _amap_place_search(q, key)
+    # 含路/街/号 → 先地理编码；学校商场等 → 先 POI
+    address_like = bool(re.search(r"[路街道巷号门弄苑区园]", q))
+    if address_like:
+        point = _amap_geocode(q, key) or _amap_place_search(q, key)
+    else:
+        point = _amap_place_search(q, key) or _amap_geocode(q, key)
     if point is None:
-        point = _amap_geocode(q, key)
-    if point is None:
-        raise ValueError(f"未找到「{q}」，请换个更具体的名称再试")
+        raise ValueError(f"未找到「{q}」，请换个更具体的名称再试（可加城市，如：保定西大街）")
     return point
 
 
 def geocode_place(place: str) -> dict:
-    """仅当查询正好是内置名时用内置坐标；含更长地点名则走高德实时检索。"""
+    """默认高德实时定位具体点；仅当输入正好是内置简称时用内置坐标。"""
     raw = (place or "").strip()
     if not raw:
         raise ValueError("请提供地名")
 
     query = extract_query_text(raw) or raw
     builtin_key = extract_place_name(query) or extract_place_name(raw)
+    # 只有整句就是「保定」「白洋淀」等才用内置；「保定西大街」必须实时搜
     if builtin_key and _is_exact_builtin_query(query, builtin_key):
         return _builtin_point(builtin_key)
 
