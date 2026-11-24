@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from auth_service import (
 )
 from chat_service import chat_in_conversation
 from tool_service import run_tool, run_media
+from map_service import geocode_place, list_places, parse_map_marker
 
 from media_service import GENERATED_ROOT, MediaError
 from database import (
@@ -205,6 +207,10 @@ class MediaGenerateReq(BaseModel):
     user_id: int
     prompt: str
     media_type: str = "image"  # image | video
+
+
+class MapGeocodeReq(BaseModel):
+    place: str = Field(..., min_length=1, max_length=64)
 
 
 def _apply_conversation_update(conv: Conversation, req: ConversationUpdateReq):
@@ -625,6 +631,38 @@ def health():
     return {"code": 200, "ok": True}
 
 
+@app.get("/api/map/config")
+def map_config(auth: User = Depends(get_current_user)):
+    """前端加载高德 JS API 所需 Key（仅显示用地图，不用地理编码 API）。"""
+    key = (os.getenv("AMAP_JS_KEY") or os.getenv("VITE_AMAP_KEY") or "").strip()
+    return {
+        "code": 200,
+        "data": {
+            "amap_js_key": key,
+            "security_js_code": (os.getenv("AMAP_SECURITY_JS_CODE") or "").strip(),
+            "places": list_places(),
+        },
+    }
+
+
+@app.get("/api/map/places")
+def map_places(auth: User = Depends(get_current_user)):
+    return {"code": 200, "data": list_places()}
+
+
+@app.post("/api/map/geocode")
+def map_geocode(
+    req: MapGeocodeReq,
+    auth: User = Depends(get_current_user),
+):
+    """内置地点坐标库查询（保定 / 白洋淀 / 狼牙山），不调用高德地理编码。"""
+    try:
+        point = geocode_place(req.place)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"code": 200, "msg": "定位成功", "data": point}
+
+
 @app.get("/api/hot-topics")
 def hot_topics(db: Session = Depends(get_db)):
     rows = db.query(HotTopic).order_by(HotTopic.rank).all()
@@ -936,10 +974,15 @@ def chat(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
+    map_point = parse_map_marker(answer)
     return {
         "code": 200,
         "msg": "调用成功",
-        "data": {"answer": answer, "conversation_id": conv_id},
+        "data": {
+            "answer": answer,
+            "conversation_id": conv_id,
+            "map": map_point,
+        },
     }
 
 

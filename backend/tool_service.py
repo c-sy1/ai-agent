@@ -12,6 +12,7 @@ from media_service import (
     resolve_media_prompt,
     save_upload_image,
 )
+from map_service import format_map_answer, geocode_place
 from ppt_service import format_pptx_answer, generate_pptx_file
 from quota_service import QuotaExceededError, require_and_consume
 from vip_service import (
@@ -23,6 +24,7 @@ from vip_service import (
 
 DRAWING_TOOLS = {"AI灵魂画手", "幻彩画匠"}
 PPT_TOOLS = {"PPT狂飙"}
+MAP_TOOLS = {"地图工具"}
 PHOTO_KEYWORDS = ("照片", "拍照", "修图", "修复", "药品")
 
 
@@ -108,6 +110,18 @@ def run_tool(
             "file_url": meta["file_url"],
             "filename": meta["filename"],
             "media_type": "pptx",
+        }
+
+    if tool.name in MAP_TOOLS or "地图" in (tool.name or ""):
+        require_and_consume(db, user, "chat")
+        point = geocode_place(text)
+        return {
+            "tool_id": tool.id,
+            "tool_name": tool.name,
+            "input": text,
+            "output": format_map_answer(point),
+            "map": point,
+            "media_type": "map",
         }
 
     require_and_consume(db, user, "chat")

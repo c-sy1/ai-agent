@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import ToolPanel from "../components/ToolPanel";
 
@@ -71,11 +71,20 @@ function ToolCard({ tool, variant, gradient, onOpen }) {
 
 export default function Toolbox() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [all, setAll] = useState([]);
   const [q, setQ] = useState(searchParams.get("q") || "");
   const [activeTool, setActiveTool] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+
+  const openTool = (tool) => {
+    if ((tool?.name || "").includes("地图")) {
+      navigate("/map");
+      return;
+    }
+    setActiveTool(tool);
+  };
 
   useEffect(() => {
     const fromUrl = searchParams.get("q");
@@ -100,12 +109,15 @@ export default function Toolbox() {
               (t.name || "").includes("修复") ||
               (t.name || "").includes("照片")
           );
-          if (hit) setActiveTool(hit);
+          if (hit) {
+            if ((hit.name || "").includes("地图")) navigate("/map");
+            else setActiveTool(hit);
+          }
         }
       })
       .catch((e) => setError(e.message || "工具列表加载失败"))
       .finally(() => setLoading(false));
-  }, [searchParams]);
+  }, [searchParams, navigate]);
 
   const filtered = useMemo(() => {
     if (!q.trim()) return all;
@@ -152,7 +164,7 @@ export default function Toolbox() {
               tool={t}
               variant="official"
               gradient={OFFICIAL_GRADIENTS[i % OFFICIAL_GRADIENTS.length]}
-              onOpen={setActiveTool}
+              onOpen={openTool}
             />
           ))}
         </div>
@@ -160,14 +172,14 @@ export default function Toolbox() {
         <h2 style={{ marginBottom: 16 }}>办公效率</h2>
         <div className="tool-grid-sm" style={{ marginBottom: 32 }}>
           {office.map((t) => (
-            <ToolCard key={t.id} tool={t} onOpen={setActiveTool} />
+            <ToolCard key={t.id} tool={t} onOpen={openTool} />
           ))}
         </div>
 
         <h2 style={{ marginBottom: 16 }}>生活实用</h2>
         <div className="tool-grid-sm">
           {life.map((t) => (
-            <ToolCard key={t.id} tool={t} onOpen={setActiveTool} />
+            <ToolCard key={t.id} tool={t} onOpen={openTool} />
           ))}
         </div>
       </div>

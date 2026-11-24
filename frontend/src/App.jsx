@@ -10,6 +10,7 @@ import Profile from "./pages/Profile";
 import Works from "./pages/Works";
 import Usage from "./pages/Usage";
 import Admin from "./pages/Admin";
+import MapChat from "./pages/MapChat";
 
 function RequireAuth({ children }) {
   if (!getSession()) return <Navigate to="/login" replace />;
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="agents" element={<Agents />} />
         <Route path="chat" element={<Chat />} />
         <Route path="chat/:conversationId" element={<Chat />} />
+        <Route path="map" element={<MapChat />} />
         <Route path="works" element={<Works />} />
         <Route path="usage" element={<Usage />} />
         <Route path="profile" element={<Profile />} />

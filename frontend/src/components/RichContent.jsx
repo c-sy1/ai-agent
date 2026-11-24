@@ -1,7 +1,9 @@
+import { Link } from "react-router-dom";
 import { resolveAssetUrl } from "../api";
 
 const IMG_RE = /!\[[^\]]*\]\(([^)]+)\)/g;
 const VIDEO_RE = /\[\[video:([^\]]+)\]\]/g;
+const MAP_RE = /\[\[map:([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([^\]]+)\]\]/g;
 const LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/g;
 
 function renderTextWithLinks(text, keyPrefix) {
@@ -46,13 +48,33 @@ export default function RichContent({ content }) {
   for (const m of content.matchAll(VIDEO_RE)) {
     markers.push({ i: m.index, len: m[0].length, type: "video", url: m[1] });
   }
+  for (const m of content.matchAll(MAP_RE)) {
+    markers.push({
+      i: m.index,
+      len: m[0].length,
+      type: "map",
+      lng: m[1],
+      lat: m[2],
+      name: m[3].trim(),
+    });
+  }
   markers.sort((a, b) => a.i - b.i);
 
   markers.forEach((mk, idx) => {
     if (mk.i > last) {
       parts.push({ kind: "text", key: `t${idx}`, text: content.slice(last, mk.i) });
     }
-    parts.push({ kind: mk.type, key: `m${idx}`, url: mk.url });
+    if (mk.type === "map") {
+      parts.push({
+        kind: "map",
+        key: `m${idx}`,
+        lng: mk.lng,
+        lat: mk.lat,
+        name: mk.name,
+      });
+    } else {
+      parts.push({ kind: mk.type, key: `m${idx}`, url: mk.url });
+    }
     last = mk.i + mk.len;
   });
   if (last < content.length) {
@@ -86,6 +108,13 @@ export default function RichContent({ content }) {
               alt="生成图片"
               loading="lazy"
             />
+          );
+        }
+        if (p.kind === "map") {
+          return (
+            <Link key={p.key} className="map-marker-link" to="/map">
+              🗺️ 在地图中查看「{p.name}」({p.lng}, {p.lat})
+            </Link>
           );
         }
         return (

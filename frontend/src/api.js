@@ -163,6 +163,13 @@ export const api = {
       body: JSON.stringify(body),
       timeoutMs: 180000,
     }),
+  mapConfig: () => request("/api/map/config"),
+  mapPlaces: () => request("/api/map/places"),
+  mapGeocode: (place) =>
+    request("/api/map/geocode", {
+      method: "POST",
+      body: JSON.stringify({ place }),
+    }),
   getTool: (id) => request(`/api/tools/${id}`),
   invokeTool: (id, body) =>
     request(`/api/tools/${id}/invoke`, {
