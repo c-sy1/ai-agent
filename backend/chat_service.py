@@ -30,6 +30,58 @@ from vip_service import VIP_FEATURE_VIDEO, VipRequiredError, require_vip
 from weather_service import fetch_weather, is_weather_question
 
 
+_RECALL_Q = re.compile(
+    r"(还记得|记不记得|记得吗|我(刚才|之前|上次|刚刚)?(问|说)了什[么麽]|"
+    r"(刚才|之前|上面|上文|历史).{0,6}(问|问题|说)|"
+    r"(问过|提过)什[么麽]|对话(里|中|历史)|把我的问题.*列|"
+    r"我都问了|问了哪些|哪些问题)",
+    re.I,
+)
+
+
+def is_recall_history_question(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    return bool(_RECALL_Q.search(t))
+
+
+def _format_asked_questions(history: list[dict], *, current: str = "") -> str:
+    """从会话历史里抽出用户问过的问题（确定性回答，不靠模型回忆）。"""
+    asked: list[str] = []
+    for item in history:
+        role = (item.get("role") or "").strip().lower()
+        if role not in ("human", "user"):
+            continue
+        content = (item.get("content") or "").strip()
+        if not content:
+            continue
+        # 去掉过长的工具结果噪音，只保留问句本身
+        line = content.split("\n", 1)[0].strip()
+        if len(line) > 120:
+            line = line[:120] + "…"
+        asked.append(line)
+    cur = (current or "").strip()
+    if cur and (not asked or asked[-1] != cur):
+        # 当前这句若是「我问了什么」本身，不重复列入
+        if not is_recall_history_question(cur):
+            asked.append(cur.split("\n", 1)[0][:120])
+
+    # 回忆类问题本身不计入
+    asked = [q for q in asked if not is_recall_history_question(q)]
+    if not asked:
+        return (
+            "当前会话里还没有更早的用户问题。"
+            "你可以先随便问几句，再问我「我刚才问了什么」。"
+        )
+    lines = [f"{i}. {q}" for i, q in enumerate(asked, 1)]
+    return (
+        f"根据本会话记录，你一共问过 {len(asked)} 个问题（按时间顺序）：\n\n"
+        + "\n".join(lines)
+        + "\n\n（以上来自会话历史，不是猜的。）"
+    )
+
+
 def _kb_search(db: Session, question: str) -> list[dict]:
     """检索知识库，返回命中文档（供注入提示 + 回答末尾标注来源）。"""
     from database import KnowledgeDoc
@@ -168,10 +220,14 @@ def _llm_reply(
         "禁止说没有记忆、每次对话独立、无法回忆本会话内容。"
     )
     messages = [{"role": "system", "content": sys}]
-    for item in history[-20:]:
+    # 多带一些轮次；工具标记压缩成短标签，避免挤掉更早的提问
+    for item in history[-40:]:
         content = (item.get("content") or "").strip()
         if not content:
             continue
+        content = re.sub(r"\[\[(map|video|image):[^\]]+\]\]", r"[\1]", content)
+        if len(content) > 1500:
+            content = content[:1500] + "…"
         raw_role = (item.get("role") or "").strip().lower()
         role = "user" if raw_role in ("human", "user") else "assistant"
         messages.append({"role": role, "content": content})
@@ -292,6 +348,16 @@ def chat_in_conversation(
     user = db.get(User, user_id)
 
     answer = None
+    # 回忆本会话问过什么：直接读库，避免模型只盯住最后一句
+    if answer is None and is_recall_history_question(question):
+        try:
+            require_and_consume(db, user, "chat")
+            answer = _format_asked_questions(history, current=question)
+        except QuotaExceededError as e:
+            answer = (
+                f"🔒 {e}\n\n"
+                "开通入口：左下角进入「个人主页」选择套餐充值。"
+            )
     # 实时能力：天气优先，避免「保定天气」被地图抢答
     if answer is None and is_weather_question(question):
         try:
