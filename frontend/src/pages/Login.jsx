@@ -30,7 +30,9 @@ function saveAuthSession(data) {
 
 export default function Login() {
   const navigate = useNavigate();
-  const [mode, setMode] = useState("login");
+  // 主切换：登录 | 注册；登录内再分密码 / 邮箱验证码；找回为附属页
+  const [panel, setPanel] = useState("login"); // login | register | reset
+  const [loginWay, setLoginWay] = useState("password"); // password | email
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [demoCode, setDemoCode] = useState("");
@@ -40,19 +42,26 @@ export default function Login() {
     username: "",
     email: "",
     password: "",
-    nickname: "",
     email_code: "",
   });
 
   const strength = useMemo(() => passwordStrength(form.password), [form.password]);
+  const needCode = panel === "register" || panel === "reset" || loginWay === "email";
+
+  const switchPanel = (next) => {
+    setPanel(next);
+    setError("");
+    setInfo("");
+    setDemoCode("");
+  };
 
   const onChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
     setError("");
   };
 
-  const sceneForMode =
-    mode === "email" ? "email_login" : mode === "reset" ? "reset_password" : "register";
+  const codeScene =
+    panel === "reset" ? "reset_password" : panel === "register" ? "register" : "email_login";
 
   const sendCode = async () => {
     setError("");
@@ -65,9 +74,10 @@ export default function Login() {
     }
     setSending(true);
     try {
-      const res = await api.sendEmailCode({ email, scene: sceneForMode });
-      setInfo(`验证码已发到 ${res.data?.email || "邮箱"}`);
-      if (res.data?.demo_code) setDemoCode(res.data.demo_code);
+      const res = await api.sendEmailCode({ email, scene: codeScene });
+      setInfo(`验证码已发送至 ${res.data?.email || "邮箱"}，请查收（含垃圾箱）`);
+      // 仅演示通道才回显；正式 SMTP 不在页面展示验证码
+      if (res.data?.demo && res.data?.demo_code) setDemoCode(res.data.demo_code);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -77,7 +87,7 @@ export default function Login() {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (mode === "register") {
+    if (panel === "register") {
       if (form.username.trim().length < 3) {
         setError("用户名至少 3 位");
         return;
@@ -87,48 +97,52 @@ export default function Login() {
         return;
       }
     }
-    if (mode === "reset" && form.password.length < 6) {
+    if (panel === "reset" && form.password.length < 6) {
       setError("新密码至少 6 位");
       return;
     }
     setLoading(true);
     setError("");
     try {
-      if (mode === "login") {
+      if (panel === "login" && loginWay === "password") {
         const res = await api.login({
           username: form.username.trim(),
           password: form.password,
         });
         saveAuthSession(res.data);
         navigate("/");
-      } else if (mode === "email") {
+        return;
+      }
+      if (panel === "login" && loginWay === "email") {
         const res = await api.loginEmail({
           email: form.email.trim(),
           email_code: form.email_code.trim(),
         });
         saveAuthSession(res.data);
         navigate("/");
-      } else if (mode === "reset") {
+        return;
+      }
+      if (panel === "reset") {
         await api.resetPassword({
           email: form.email.trim(),
           email_code: form.email_code.trim(),
           new_password: form.password,
         });
-        setInfo("密码已重置，请用新密码登录");
-        setMode("login");
+        setInfo("密码已重置，请使用新密码登录");
+        setLoginWay("password");
+        switchPanel("login");
         setForm((f) => ({ ...f, email_code: "", password: "" }));
-        setDemoCode("");
-      } else {
-        const res = await api.register({
-          username: form.username.trim(),
-          email: form.email.trim(),
-          password: form.password,
-          nickname: form.nickname.trim() || form.username.trim(),
-          email_code: form.email_code.trim(),
-        });
-        saveAuthSession(res.data);
-        navigate("/");
+        return;
       }
+      const res = await api.register({
+        username: form.username.trim(),
+        email: form.email.trim(),
+        password: form.password,
+        nickname: form.username.trim(),
+        email_code: form.email_code.trim(),
+      });
+      saveAuthSession(res.data);
+      navigate("/");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -136,59 +150,81 @@ export default function Login() {
     }
   };
 
+  const title =
+    panel === "register" ? "注册账号" : panel === "reset" ? "重置密码" : "登录 Apex AI";
+
   return (
     <div className="login-page">
       <div className="login-card card">
         <div className="hero" style={{ marginBottom: 20 }}>
           <div className="hero-logo">🤖</div>
           <h1>Apex AI</h1>
-          <p>从熬夜加班到一键生成，你和高效办公只差一个 AI</p>
+          <p>{title}</p>
         </div>
 
-        <div className="login-security">
-          <span>bcrypt 密码哈希</span>
-          <span>JWT 鉴权</span>
-          <span>邮箱验证码</span>
-          <span>管理员二次验证</span>
-        </div>
+        {panel !== "reset" && (
+          <div className="login-tabs">
+            <button
+              type="button"
+              className={panel === "login" ? "active" : ""}
+              onClick={() => switchPanel("login")}
+            >
+              登录
+            </button>
+            <button
+              type="button"
+              className={panel === "register" ? "active" : ""}
+              onClick={() => switchPanel("register")}
+            >
+              注册
+            </button>
+          </div>
+        )}
 
-        <div className="login-tabs">
-          <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>
-            密码登录
-          </button>
-          <button type="button" className={mode === "email" ? "active" : ""} onClick={() => setMode("email")}>
-            邮箱登录
-          </button>
-          <button type="button" className={mode === "register" ? "active" : ""} onClick={() => setMode("register")}>
-            注册
-          </button>
-          <button type="button" className={mode === "reset" ? "active" : ""} onClick={() => setMode("reset")}>
-            找回密码
-          </button>
-        </div>
+        {panel === "login" && (
+          <div className="login-way">
+            <button
+              type="button"
+              className={loginWay === "password" ? "active" : ""}
+              onClick={() => {
+                setLoginWay("password");
+                setDemoCode("");
+                setError("");
+              }}
+            >
+              账号密码
+            </button>
+            <button
+              type="button"
+              className={loginWay === "email" ? "active" : ""}
+              onClick={() => {
+                setLoginWay("email");
+                setDemoCode("");
+                setError("");
+              }}
+            >
+              邮箱验证码
+            </button>
+          </div>
+        )}
 
         <form onSubmit={submit}>
-          {mode === "register" && (
-            <div className="form-field">
-              <label>昵称</label>
-              <input name="nickname" placeholder="显示名称" value={form.nickname} onChange={onChange} autoComplete="nickname" />
-            </div>
-          )}
-          {(mode === "login" || mode === "register") && (
+          {(panel === "register" || (panel === "login" && loginWay === "password")) && (
             <div className="form-field">
               <label>用户名</label>
               <input
                 name="username"
                 required
-                minLength={mode === "register" ? 3 : 1}
-                placeholder={mode === "register" ? "3～32 位登录名" : "登录用户名"}
+                minLength={panel === "register" ? 3 : 1}
+                placeholder={panel === "register" ? "3～32 位，用于登录" : "请输入用户名"}
                 value={form.username}
                 onChange={onChange}
                 autoComplete="username"
               />
             </div>
           )}
-          {mode !== "login" && (
+
+          {needCode && (
             <div className="form-field">
               <label>邮箱</label>
               <div className="sms-inline">
@@ -196,7 +232,7 @@ export default function Login() {
                   name="email"
                   type="email"
                   required
-                  placeholder="name@qq.com"
+                  placeholder="用于接收验证码"
                   value={form.email}
                   onChange={onChange}
                   autoComplete="email"
@@ -207,34 +243,38 @@ export default function Login() {
               </div>
             </div>
           )}
-          {mode !== "login" && (
+
+          {needCode && (
             <div className="form-field">
-              <label>邮箱验证码</label>
+              <label>验证码</label>
               <input
                 name="email_code"
                 required
                 inputMode="numeric"
                 maxLength={6}
-                placeholder="6 位数字"
+                placeholder="6 位邮箱验证码"
                 value={form.email_code}
                 onChange={onChange}
               />
             </div>
           )}
-          {mode !== "email" && (
+
+          {(panel === "register" ||
+            panel === "reset" ||
+            (panel === "login" && loginWay === "password")) && (
             <div className="form-field">
-              <label>{mode === "reset" ? "新密码" : "密码"}</label>
+              <label>{panel === "reset" ? "新密码" : "密码"}</label>
               <input
                 name="password"
                 type="password"
                 required
                 minLength={6}
-                placeholder={mode === "login" ? "请输入密码" : "至少 6 位"}
+                placeholder={panel === "login" ? "请输入密码" : "至少 6 位"}
                 value={form.password}
                 onChange={onChange}
-                autoComplete={mode === "login" ? "current-password" : "new-password"}
+                autoComplete={panel === "login" ? "current-password" : "new-password"}
               />
-              {mode === "register" && form.password && (
+              {panel === "register" && form.password && (
                 <div className={`pwd-strength level-${strength.level}`}>
                   <div className="pwd-strength-bar" />
                   <span>强度：{strength.label}</span>
@@ -242,28 +282,50 @@ export default function Login() {
               )}
             </div>
           )}
-          {demoCode && (
-            <div className="demo-code">
-              演示验证码：{demoCode}（未配 SMTP 时显示；配好 QQ/163 授权码后会发到邮箱）
+
+          {panel === "login" && loginWay === "password" && (
+            <div className="login-links">
+              <button type="button" className="linkish" onClick={() => switchPanel("reset")}>
+                忘记密码？
+              </button>
             </div>
+          )}
+
+          {demoCode && (
+            <div className="demo-code">当前为演示通道，验证码：{demoCode}</div>
           )}
           {info && <div className="form-ok">{info}</div>}
           {error && <div className="form-error">{error}</div>}
+
           <button type="submit" className="btn-primary" style={{ width: "100%" }} disabled={loading}>
             {loading
               ? "请稍候…"
-              : mode === "login"
-                ? "安全登录"
-                : mode === "email"
-                  ? "邮箱验证码登录"
-                  : mode === "reset"
-                    ? "重置密码"
-                    : "注册并进入"}
+              : panel === "register"
+                ? "注册并进入"
+                : panel === "reset"
+                  ? "确认重置"
+                  : loginWay === "email"
+                    ? "验证码登录"
+                    : "登录"}
           </button>
+
+          {panel === "reset" && (
+            <button
+              type="button"
+              className="logout-btn"
+              style={{ width: "100%", marginTop: 10 }}
+              onClick={() => {
+                setLoginWay("password");
+                switchPanel("login");
+              }}
+            >
+              返回登录
+            </button>
+          )}
         </form>
 
         <p className="login-hint">
-          验证码发到邮箱（个人 QQ/163 SMTP 即可）。管理员请用账号密码登录，进入后台再做邮箱二次验证。
+          验证码发送至用户邮箱。管理员请用账号密码登录，进入后台后再做邮箱二次验证。
         </p>
       </div>
     </div>
