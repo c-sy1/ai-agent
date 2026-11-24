@@ -1,0 +1,64 @@
+version: "1.0"
+name: 构建、部署到自有主机
+displayName: 构建、部署到自有主机
+stages:
+- name: 构建
+  displayName: 构建
+  strategy: naturally
+  trigger: auto
+  steps:
+  - step: build@nodejs
+    name: ""
+    displayName: Nodejs 构建
+    nodeVersion: 20.10.0
+    commands:
+    - npm config set registry https://registry.npmmirror.com
+    - cd frontend
+    - npm install
+    - npm run build
+    artifacts:
+    - name: BUILD_ARTIFACT
+      path:
+      - frontend/dis
+      type: .tar.gz
+    caches:
+    - "~/.npm"
+    - "~/.yarn"
+    notify: []
+    strategy:
+      retry: "0"
+      resource:
+        cpu: "2"
+        memory: "4"
+- name: 部署
+  displayName: 部署
+  strategy: naturally
+  trigger: auto
+  steps:
+  - step: deploy@agent
+    name: ""
+    displayName: 主机部署
+    deployArtifact:
+    - name: output
+      target: "~/gitee_go/deploy"
+      source: build
+      dependArtifact: BUILD_ARTIFACT
+      artifactRepository: default
+      artifactName: output
+      artifactVersion: latest
+    script: |-
+      cd /opt/apex-ai
+      chmod +x deploy.sh
+      bash deploy.sh
+    hostGroupID:
+      ID: apex-aliyun
+      hostID:
+      - 30dd54c6-edc4-4e38-9c1b-b738436590de
+    notify: []
+    strategy:
+      retry: "0"
+triggers:
+  trigger: manual
+notify: []
+strategy:
+  blocking: true
