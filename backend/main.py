@@ -1086,7 +1086,7 @@ def vip_recharge(
     """创建 VIP 订单并返回支付宝支付链接（支付成功后才开通）。"""
     assert_self_or_admin(auth, req.user_id)
     user = _user_or_404(db, req.user_id)
-    _require_pay_sms(db, user, req.sms_code)
+    # 支付鉴权交给支付宝；不再强制邮箱/短信验证码（页面无入口会导致“点不动”）
     try:
         order, pay_url = create_vip_order(db, user, req.package_id)
     except PaymentConfigError as e:
@@ -1164,8 +1164,7 @@ def vip_continue_pay(
 ):
     """待支付订单重新生成支付宝跳转链接。"""
     assert_self_or_admin(auth, req.user_id)
-    user = _user_or_404(db, req.user_id)
-    _require_pay_sms(db, user, req.sms_code)
+    _user_or_404(db, req.user_id)
     order = db.get(RechargeOrder, order_id)
     if order is None or order.user_id != req.user_id:
         raise HTTPException(status_code=404, detail="订单不存在")
