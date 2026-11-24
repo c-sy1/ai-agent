@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { api, setSession } from "../api";
+import { Link, useNavigate } from "react-router-dom";
+import { api, clearSession, setSession } from "../api";
 
 function passwordStrength(pwd) {
   if (!pwd) return { level: 0, label: "" };
@@ -28,8 +28,9 @@ function saveAuthSession(data) {
   });
 }
 
-export default function Login() {
+export default function Login({ portal = "user" }) {
   const navigate = useNavigate();
+  const isAdminPortal = portal === "admin";
   // 主切换：登录 | 注册；登录内再分密码 / 邮箱验证码；找回为附属页
   const [panel, setPanel] = useState("login"); // login | register | reset
   const [loginWay, setLoginWay] = useState("password"); // password | email
@@ -46,7 +47,29 @@ export default function Login() {
   });
 
   const strength = useMemo(() => passwordStrength(form.password), [form.password]);
-  const needCode = panel === "register" || panel === "reset" || loginWay === "email";
+  const needCode =
+    !isAdminPortal && (panel === "register" || panel === "reset" || loginWay === "email");
+
+  const enterAfterAuth = (data) => {
+    if (isAdminPortal) {
+      if (!data.is_admin) {
+        clearSession();
+        setError("此账号不是管理员，请使用用户端登录");
+        return false;
+      }
+      saveAuthSession(data);
+      navigate("/admin", { replace: true });
+      return true;
+    }
+    if (data.is_admin) {
+      clearSession();
+      setError("管理员请使用管理端登录：/admin/login");
+      return false;
+    }
+    saveAuthSession(data);
+    navigate("/", { replace: true });
+    return true;
+  };
 
   const switchPanel = (next) => {
     setPanel(next);
@@ -87,6 +110,22 @@ export default function Login() {
 
   const submit = async (e) => {
     e.preventDefault();
+    if (isAdminPortal) {
+      setLoading(true);
+      setError("");
+      try {
+        const res = await api.login({
+          username: form.username.trim(),
+          password: form.password,
+        });
+        enterAfterAuth(res.data);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     if (panel === "register") {
       if (form.username.trim().length < 3) {
         setError("用户名至少 3 位");
@@ -109,8 +148,7 @@ export default function Login() {
           username: form.username.trim(),
           password: form.password,
         });
-        saveAuthSession(res.data);
-        navigate("/");
+        enterAfterAuth(res.data);
         return;
       }
       if (panel === "login" && loginWay === "email") {
@@ -118,8 +156,7 @@ export default function Login() {
           email: form.email.trim(),
           email_code: form.email_code.trim(),
         });
-        saveAuthSession(res.data);
-        navigate("/");
+        enterAfterAuth(res.data);
         return;
       }
       if (panel === "reset") {
@@ -141,8 +178,7 @@ export default function Login() {
         nickname: form.username.trim(),
         email_code: form.email_code.trim(),
       });
-      saveAuthSession(res.data);
-      navigate("/");
+      enterAfterAuth(res.data);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -150,19 +186,24 @@ export default function Login() {
     }
   };
 
-  const title =
-    panel === "register" ? "注册账号" : panel === "reset" ? "重置密码" : "登录 Apex AI";
+  const title = isAdminPortal
+    ? "管理端登录"
+    : panel === "register"
+      ? "注册账号"
+      : panel === "reset"
+        ? "重置密码"
+        : "用户登录";
 
   return (
     <div className="login-page">
       <div className="login-card card">
         <div className="hero" style={{ marginBottom: 20 }}>
           <div className="hero-logo">🤖</div>
-          <h1>Apex AI222</h1>
+          <h1>{isAdminPortal ? "Apex AI 管理端" : "Apex AI"}</h1>
           <p>{title}</p>
         </div>
 
-        {panel !== "reset" && (
+        {!isAdminPortal && panel !== "reset" && (
           <div className="login-tabs">
             <button
               type="button"
@@ -181,7 +222,7 @@ export default function Login() {
           </div>
         )}
 
-        {panel === "login" && (
+        {!isAdminPortal && panel === "login" && (
           <div className="login-way">
             <button
               type="button"
@@ -209,14 +250,22 @@ export default function Login() {
         )}
 
         <form onSubmit={submit}>
-          {(panel === "register" || (panel === "login" && loginWay === "password")) && (
+          {(isAdminPortal ||
+            panel === "register" ||
+            (panel === "login" && loginWay === "password")) && (
             <div className="form-field">
               <label>用户名</label>
               <input
                 name="username"
                 required
                 minLength={panel === "register" ? 3 : 1}
-                placeholder={panel === "register" ? "3～32 位，用于登录" : "请输入用户名"}
+                placeholder={
+                  isAdminPortal
+                    ? "管理员账号"
+                    : panel === "register"
+                      ? "3～32 位，用于登录"
+                      : "请输入用户名"
+                }
                 value={form.username}
                 onChange={onChange}
                 autoComplete="username"
@@ -259,7 +308,8 @@ export default function Login() {
             </div>
           )}
 
-          {(panel === "register" ||
+          {(isAdminPortal ||
+            panel === "register" ||
             panel === "reset" ||
             (panel === "login" && loginWay === "password")) && (
             <div className="form-field">
@@ -325,7 +375,16 @@ export default function Login() {
         </form>
 
         <p className="login-hint">
-          验证码发送至用户邮箱。管理员请用账号密码登录，进入后台后再做邮箱二次验证。
+          {isAdminPortal
+            ? "仅管理员账号可进入。用户请使用用户端登录。"
+            : "验证码发送至用户邮箱。管理员请走管理端，不可在此登录。"}
+        </p>
+        <p className="login-hint" style={{ marginTop: 8 }}>
+          {isAdminPortal ? (
+            <Link to="/login">← 前往用户端登录</Link>
+          ) : (
+            <Link to="/admin/login">管理员入口 →</Link>
+          )}
         </p>
       </div>
     </div>

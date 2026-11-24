@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { getSession } from "../api";
+import { clearSession, getSession } from "../api";
 
 export default function AppLayout() {
   const user = getSession();
@@ -10,6 +10,10 @@ export default function AppLayout() {
   const showLoginName = Boolean(nickname && nickname !== username);
 
   const newChat = () => navigate("/chat");
+  const logout = () => {
+    clearSession();
+    navigate("/login", { replace: true });
+  };
 
   return (
     <div className="app-shell">
@@ -28,7 +32,10 @@ export default function AppLayout() {
           <NavLink to="/map" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
             🗺️ 地图
           </NavLink>
-          <NavLink to="/knowledge" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+          <NavLink
+            to="/knowledge"
+            className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+          >
             📚 知识库
           </NavLink>
           <NavLink to="/agents" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
@@ -41,14 +48,6 @@ export default function AppLayout() {
           >
             网页版对话记录
           </NavLink>
-          {user?.is_admin ? (
-            <NavLink
-              to="/feedback-admin"
-              className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-            >
-              📝 对话反馈
-            </NavLink>
-          ) : null}
         </nav>
         <NavLink
           to="/profile"
@@ -65,6 +64,9 @@ export default function AppLayout() {
             )}
           </div>
         </NavLink>
+        <button type="button" className="logout-btn" style={{ margin: "8px 12px 16px" }} onClick={logout}>
+          退出登录
+        </button>
       </aside>
       <div className="main-area">
         <Outlet />

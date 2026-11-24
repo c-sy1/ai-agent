@@ -195,11 +195,6 @@ export default function Profile() {
               ? `VIP 有效至 ${profile.vip_expire_at ? profile.vip_expire_at.slice(0, 10) : "长期"}`
               : "普通用户 · 免费有日额度，视频/PPT 与高额度需开通 VIP"}
           </p>
-          {profile?.is_admin ? (
-            <Link to="/admin" className="btn-primary" style={{ display: "inline-block", marginTop: 8 }}>
-              进入管理后台
-            </Link>
-          ) : null}
         </div>
       </div>
 

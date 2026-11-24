@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api, getSession } from "../api";
 
 export default function Admin() {
@@ -26,7 +26,7 @@ export default function Admin() {
     } catch (e) {
       setError(e.message);
       if (String(e.message).includes("管理员")) {
-        setTimeout(() => navigate("/profile"), 1200);
+        setTimeout(() => navigate("/admin/login"), 1200);
       }
     } finally {
       setLoading(false);
@@ -34,10 +34,6 @@ export default function Admin() {
   };
 
   useEffect(() => {
-    if (!session?.user_id) {
-      navigate("/login", { replace: true });
-      return;
-    }
     load();
   }, [session?.user_id]);
 
@@ -73,23 +69,11 @@ export default function Admin() {
   };
 
   return (
-    <div className="admin-shell">
-      <header className="admin-topbar">
-        <div className="admin-topbar-brand">Apex AI · 管理后台</div>
-        <div className="admin-topbar-actions">
-          <Link to="/profile" className="logout-btn">
-            返回个人主页
-          </Link>
-          <Link to="/" className="logout-btn">
-            回工作台
-          </Link>
-        </div>
-      </header>
-      <div className="page-scroll profile-page admin-body">
+    <div className="page-scroll profile-page">
       <div className="card profile-hero">
         <div>
-          <h1 style={{ margin: "0 0 6px" }}>管理后台</h1>
-          <p className="profile-desc">开通 / 取消 VIP，查看充值订单</p>
+          <h1 style={{ margin: "0 0 6px" }}>用户与 VIP</h1>
+          <p className="profile-desc">开通 / 取消 VIP，查看充值订单（仅管理端）</p>
         </div>
       </div>
 
@@ -168,7 +152,9 @@ export default function Admin() {
                     <td>{o.user_id}</td>
                     <td>{o.package_name}</td>
                     <td>¥{o.amount}</td>
-                    <td>{o.status === "paid" ? "已支付" : o.status === "pending" ? "待支付" : o.status}</td>
+                    <td>
+                      {o.status === "paid" ? "已支付" : o.status === "pending" ? "待支付" : o.status}
+                    </td>
                     <td>{o.channel || "-"}</td>
                     <td>{o.created_at ? o.created_at.slice(0, 19).replace("T", " ") : "-"}</td>
                   </tr>
@@ -178,7 +164,6 @@ export default function Admin() {
           </div>
         </>
       )}
-      </div>
     </div>
   );
 }

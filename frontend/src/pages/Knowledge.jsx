@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, getSession } from "../api";
+import { api } from "../api";
 
 const CATS = ["全部", "使用说明", "业务资料", "常见问题"];
 
@@ -10,9 +10,8 @@ const CAT_TONE = {
   常见问题: "tone-red",
 };
 
-export default function Knowledge() {
-  const session = getSession();
-  const isAdmin = Boolean(session?.is_admin);
+export default function Knowledge({ manage = false }) {
+  const canManage = Boolean(manage);
   const [category, setCategory] = useState("全部");
   const [docs, setDocs] = useState([]);
   const [title, setTitle] = useState("");
@@ -80,8 +79,14 @@ export default function Knowledge() {
           <p className="kb-eyebrow">Knowledge</p>
           <h1>知识库</h1>
           <p className="kb-lead">
-            这是产品共享知识库：管理员维护资料，所有用户在 <Link to="/chat">对话</Link> 提问时自动引用。
-            普通用户只需浏览；写入/删除仅管理员可用。
+            {canManage
+              ? "管理端维护共享资料；用户端仅可浏览，对话时会自动引用。"
+              : (
+                <>
+                  共享知识库仅供浏览；在 <Link to="/chat">对话</Link> 提问时会自动引用。
+                  资料由管理端维护。
+                </>
+              )}
           </p>
         </div>
         <div className="kb-stat">
@@ -90,10 +95,10 @@ export default function Knowledge() {
         </div>
       </header>
 
-      {isAdmin ? (
+      {canManage ? (
         <section className="kb-composer">
           <div className="kb-composer-top">
-            <h2>新增资料（管理员）</h2>
+            <h2>新增资料</h2>
             <div className="kb-cat-select">
               {CATS.filter((c) => c !== "全部").map((c) => (
                 <button
@@ -135,7 +140,7 @@ export default function Knowledge() {
         </section>
       ) : (
         <p className="kb-muted" style={{ textAlign: "left", padding: "0 0 16px" }}>
-          你当前是普通用户，可查看资料；维护内容请使用管理员账号（如 xiaoyema）。
+          仅可查看；新增/删除请使用管理端（/admin/login）。
         </p>
       )}
 
@@ -175,7 +180,7 @@ export default function Knowledge() {
                 </div>
                 <span className="kb-chevron">{open ? "收起" : "展开"}</span>
               </button>
-              {isAdmin ? (
+              {canManage ? (
                 <div className="kb-item-actions">
                   <button type="button" className="kb-del" onClick={() => remove(d.id)}>
                     删除
@@ -189,7 +194,7 @@ export default function Knowledge() {
 
       {!loading && docs.length === 0 && (
         <p className="kb-muted">
-          {isAdmin ? "该分类暂无文档，上方可新增。" : "该分类暂无文档。"}
+          {canManage ? "该分类暂无文档，上方可新增。" : "该分类暂无文档。"}
         </p>
       )}
     </div>

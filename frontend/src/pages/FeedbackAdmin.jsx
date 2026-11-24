@@ -1,24 +1,13 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
 import { api, getSession } from "../api";
 
 export default function FeedbackAdmin() {
-  const navigate = useNavigate();
   const session = getSession();
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!session?.user_id) {
-      navigate("/login", { replace: true });
-      return;
-    }
-    if (!session?.is_admin) {
-      setError("需要管理员权限");
-      setLoading(false);
-      return;
-    }
     api
       .adminFeedback()
       .then((r) => setRows(r.data || []))
@@ -29,17 +18,13 @@ export default function FeedbackAdmin() {
   return (
     <div className="page-scroll">
       <div className="hero">
-        <h1>对话反馈管理</h1>
+        <h1>对话反馈</h1>
         <p style={{ color: "#636e72", marginTop: 8 }}>
           查看用户对 AI 回复的 👍 / 👎，用于迭代提示词与知识库。
         </p>
       </div>
       {loading && <p>加载中…</p>}
-      {error && (
-        <p style={{ color: "#c0392b" }}>
-          {error} <Link to="/profile">返回</Link>
-        </p>
-      )}
+      {error && <p style={{ color: "#c0392b" }}>{error}</p>}
       <div className="card" style={{ overflowX: "auto" }}>
         <table className="admin-table" style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>

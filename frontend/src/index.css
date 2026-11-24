@@ -1360,12 +1360,41 @@ a.user-bar-link.active {
 .admin-topbar-brand {
   font-weight: 700;
   font-size: 16px;
+  white-space: nowrap;
+}
+
+.admin-topbar-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  flex: 1;
+  justify-content: center;
+}
+
+.admin-topbar-nav a {
+  color: #636e72;
+  text-decoration: none;
+  font-size: 14px;
+  padding: 4px 2px;
+  border-bottom: 2px solid transparent;
+}
+
+.admin-topbar-nav a.on {
+  color: #2d3436;
+  font-weight: 600;
+  border-bottom-color: #0984e3;
 }
 
 .admin-topbar-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.admin-user-label {
+  font-size: 13px;
+  color: #636e72;
 }
 
 .admin-body {
