@@ -44,7 +44,10 @@ def _today() -> str:
 
 
 def _limits_for(user: User) -> dict:
-    return VIP_LIMITS if is_vip_active(user) else FREE_LIMITS
+    base = dict(VIP_LIMITS if is_vip_active(user) else FREE_LIMITS)
+    base["chat"] += int(getattr(user, "quota_chat_extra", 0) or 0)
+    base["image"] += int(getattr(user, "quota_image_extra", 0) or 0)
+    return base
 
 
 def _get_or_create_row(db: Session, user_id: int) -> UsageDaily:

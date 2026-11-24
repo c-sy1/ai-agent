@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import datetime
 from threading import Lock
 
 import bcrypt
@@ -115,6 +116,7 @@ def auth_payload_for(user: User) -> dict:
         "username": user.username,
         "nickname": user.nickname or user.username,
         "email": user.email,
+        "phone": (getattr(user, "phone", None) or ""),
         "access_token": create_access_token(user),
         "token_type": "Bearer",
         **vip_status(user),
@@ -138,6 +140,8 @@ def get_current_user(
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=401, detail="用户不存在或已被删除")
+    if int(getattr(user, "is_disabled", 0) or 0) == 1:
+        raise HTTPException(status_code=403, detail="账号已禁用，请联系管理员")
     return user
 
 
@@ -152,3 +156,14 @@ def assert_self_or_admin(auth: User, user_id: int) -> None:
 def require_admin(auth: User) -> None:
     if int(getattr(auth, "is_admin", 0) or 0) != 1:
         raise HTTPException(status_code=403, detail="需要管理员权限")
+
+
+def require_admin_mfa(auth: User) -> None:
+    """后台高危接口：账号密码登录后，还需处于二次验证有效期内（邮箱/短信）。"""
+    require_admin(auth)
+    until = getattr(auth, "admin_mfa_until", None)
+    if until is None or until < datetime.utcnow():
+        raise HTTPException(
+            status_code=403,
+            detail="进入后台需要二次验证（邮箱验证码）",
+        )

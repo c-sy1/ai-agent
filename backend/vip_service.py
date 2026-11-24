@@ -159,4 +159,7 @@ def mark_order_paid(db: Session, out_trade_no: str, *, trade_no: str = "") -> Re
     order.channel = "alipay"
     db.commit()
     db.refresh(order)
+    from sms_service import notify_vip_opened
+
+    notify_vip_opened(db, user, order.package_name, order.days)
     return order
