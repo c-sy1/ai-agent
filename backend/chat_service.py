@@ -30,40 +30,78 @@ from vip_service import VIP_FEATURE_VIDEO, VipRequiredError, require_vip
 from weather_service import fetch_weather, is_weather_question
 
 
-def _kb_context(db: Session, question: str) -> str:
-    """简易知识库检索：按分类关键词匹配文档片段，注入系统提示。"""
+def _kb_search(db: Session, question: str) -> list[dict]:
+    """检索知识库，返回命中文档（供注入提示 + 回答末尾标注来源）。"""
     from database import KnowledgeDoc
 
     q = (question or "").strip()
     if not q:
-        return ""
+        return []
     cat = None
-    if any(k in q for k in ("红色", "军校", "狼牙山", "抗战", "革命")):
+    if any(k in q for k in ("红色", "军校", "狼牙山", "抗战", "革命", "五勇士")):
         cat = "红色文化"
-    elif any(k in q for k in ("景点", "景区", "公园", "博物馆", "白洋淀", "莲花池")):
+    elif any(
+        k in q
+        for k in ("景点", "景区", "公园", "博物馆", "白洋淀", "莲花池", "总督署", "西大街")
+    ):
         cat = "景点介绍"
-    elif any(k in q for k in ("历史", "人文", "直隶", "文化")):
+    elif any(k in q for k in ("历史", "人文", "直隶", "文化", "街区")):
         cat = "历史人文"
 
     query = db.query(KnowledgeDoc)
     if cat:
         query = query.filter(KnowledgeDoc.category == cat)
-    rows = query.order_by(KnowledgeDoc.id.desc()).limit(40).all()
-    hits = []
+    rows = query.order_by(KnowledgeDoc.id.desc()).limit(50).all()
+    words = re.findall(r"[\u4e00-\u9fff]{2,}", q)
+    hits: list[dict] = []
     for r in rows:
         blob = f"{r.title}\n{r.content}"
-        if any(ch in blob for ch in q if len(ch) > 1) or any(
-            w in blob for w in re.findall(r"[\u4e00-\u9fff]{2,}", q)[:8]
-        ):
-            hits.append(f"【{r.category}/{r.title}】\n{r.content[:800]}")
-        if len(hits) >= 3:
-            break
+        score = 0
+        if r.title and r.title in q:
+            score += 5
+        for w in words:
+            if w in blob:
+                score += 1
+        if score <= 0:
+            continue
+        hits.append(
+            {
+                "id": r.id,
+                "category": r.category,
+                "title": r.title,
+                "content": r.content[:800],
+                "score": score,
+            }
+        )
+    hits.sort(key=lambda x: x["score"], reverse=True)
     if not hits and cat:
         for r in rows[:2]:
-            hits.append(f"【{r.category}/{r.title}】\n{r.content[:800]}")
+            hits.append(
+                {
+                    "id": r.id,
+                    "category": r.category,
+                    "title": r.title,
+                    "content": r.content[:800],
+                    "score": 0,
+                }
+            )
+    return hits[:3]
+
+
+def _kb_context(db: Session, question: str) -> str:
+    hits = _kb_search(db, question)
     if not hits:
         return ""
-    return "\n\n".join(hits)
+    return "\n\n".join(
+        f"【{h['category']}/{h['title']}】\n{h['content']}" for h in hits
+    )
+
+
+def _kb_footer(hits: list[dict]) -> str:
+    if not hits:
+        return ""
+    names = "、".join(f"「{h['title']}」" for h in hits)
+    return f"\n\n---\n📚 已参考文旅知识库：{names}"
 
 PM_INTERVIEW_REPLY = """产品经理面试通常涵盖以下六大模块，建议逐条准备：
 
@@ -225,9 +263,15 @@ def chat_in_conversation(
             "若涉及保定文旅，可结合知识库资料回答，勿编造未提供的史实。"
         )
     )
-    kb = _kb_context(db, question)
+    kb_hits = _kb_search(db, question)
+    kb = "\n\n".join(
+        f"【{h['category']}/{h['title']}】\n{h['content']}" for h in kb_hits
+    )
     if kb:
-        system_prompt += f"\n\n【文旅知识库参考】\n{kb}"
+        system_prompt += (
+            "\n\n【文旅知识库参考】请优先依据下列资料回答，可润色但不要编造资料外史实。\n"
+            f"{kb}"
+        )
 
     history_rows = (
         db.query(ChatMessage)
@@ -375,7 +419,16 @@ def chat_in_conversation(
         else:
             answer = _unwrap_llm(_llm_reply(question, history, system_prompt), question)
             if answer is None:
-                answer = _demo_reply(question, agent)
+                # 无大模型时，直接用知识库拼一版可读回答
+                if kb_hits:
+                    parts = [
+                        f"根据知识库「{h['title']}」：\n{h['content']}" for h in kb_hits
+                    ]
+                    answer = "\n\n".join(parts)
+                else:
+                    answer = _demo_reply(question, agent)
+            if kb_hits and answer and "已参考文旅知识库" not in answer:
+                answer = answer.rstrip() + _kb_footer(kb_hits)
 
     db.add(
         ChatMessage(

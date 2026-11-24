@@ -76,7 +76,10 @@ export default function Knowledge() {
         <div>
           <p className="kb-eyebrow">Culture & Tourism</p>
           <h1>文旅知识库</h1>
-          <p className="kb-lead">资料按分类入库，对话时自动检索相关内容作答。</p>
+          <p className="kb-lead">
+            这里存放保定文旅资料。你在「对话 / 地图」里问狼牙山、白洋淀、西大街等时，
+            系统会自动检索本库，并在回答末尾标注「已参考文旅知识库」。
+          </p>
         </div>
         <div className="kb-stat">
           <strong>{docs.length}</strong>
