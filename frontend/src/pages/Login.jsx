@@ -158,7 +158,7 @@ export default function Login() {
       <div className="login-card card">
         <div className="hero" style={{ marginBottom: 20 }}>
           <div className="hero-logo">🤖</div>
-          <h1>Apex AI</h1>
+          <h1>Apex AI222</h1>
           <p>{title}</p>
         </div>
 
