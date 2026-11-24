@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { api, getSession } from "../api";
 import RichContent from "../components/RichContent";
 
-const QUICK = ["白洋淀在哪？", "狼牙山坐标", "保定位置"];
+const QUICK = ["保定理工学院位置", "白洋淀在哪？", "狼牙山坐标"];
 
 function loadAmapScript(key, securityCode) {
   return new Promise((resolve, reject) => {
@@ -196,7 +196,7 @@ export default function MapChat() {
         <div className="map-chat-head">
           <div>
             <h1>地图工具</h1>
-            <p>内置：保定 · 白洋淀 · 狼牙山（对话自动定位）</p>
+            <p>内置：保定理工学院 · 保定 · 白洋淀 · 狼牙山</p>
           </div>
           <Link to="/toolbox" className="map-back">
             ← 工具箱
