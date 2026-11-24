@@ -101,18 +101,30 @@ def extract_place_name(text: str) -> str | None:
 
 
 def extract_query_text(text: str) -> str:
-    """从自然语言抽出待检索地名。"""
-    builtin = extract_place_name(text)
-    if builtin:
-        return PLACE_LIBRARY[builtin]["name"]
+    """从自然语言抽出待检索地名（保留完整词，如「保定西大街」不砍成「保定」）。"""
     t = (text or "").strip()
     t = _NOISE_PREFIX.sub("", t)
-    t = _GEO_HINT.sub("", t)
+    # 只剥句尾意图词，避免「保定位置」被「定位」误切成「保置」
+    t = re.sub(
+        r"(的)?(在哪[里儿]?|位置|坐标|地图|定位|点位|怎么走|导航|经纬度|打卡|地址)+$",
+        "",
+        t,
+    )
     t = re.sub(r"[？?。！!，,、：:\s]+", "", t)
-    for noise in ("一下", "看看", "告诉我", "是多少", "在", "的"):
+    for noise in ("一下", "看看", "告诉我", "是多少"):
         if t.endswith(noise) and len(t) > len(noise) + 1:
             t = t[: -len(noise)]
     return t.strip()
+
+
+def _builtin_names(key: str) -> set[str]:
+    meta = PLACE_LIBRARY[key]
+    return {key, meta["name"], *(meta.get("aliases") or [])}
+
+
+def _is_exact_builtin_query(query: str, key: str) -> bool:
+    """查询是否正好是内置地名（而不是「保定西大街」这种更长地点）。"""
+    return (query or "").strip() in _builtin_names(key)
 
 
 def is_map_question(text: str) -> bool:
@@ -276,24 +288,14 @@ def amap_realtime(query: str) -> dict:
 
 
 def geocode_place(place: str) -> dict:
-    """内置库优先，否则高德实时检索。"""
+    """仅当查询正好是内置名时用内置坐标；含更长地点名则走高德实时检索。"""
     raw = (place or "").strip()
     if not raw:
         raise ValueError("请提供地名")
 
-    builtin_key = extract_place_name(raw)
-    if builtin_key and builtin_key in PLACE_LIBRARY:
-        # 用户明确说了更长内置名，或查询本身就是内置名
-        return _builtin_point(builtin_key)
-
     query = extract_query_text(raw) or raw
-    # 再扫一次内置（抽词后可能正好是库内名）
-    builtin_key = extract_place_name(query)
-    if builtin_key and query in (
-        PLACE_LIBRARY[builtin_key]["name"],
-        builtin_key,
-        *PLACE_LIBRARY[builtin_key].get("aliases", []),
-    ):
+    builtin_key = extract_place_name(query) or extract_place_name(raw)
+    if builtin_key and _is_exact_builtin_query(query, builtin_key):
         return _builtin_point(builtin_key)
 
     return amap_realtime(query)
