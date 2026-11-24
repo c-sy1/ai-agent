@@ -27,7 +27,10 @@ export default function AdminLayout() {
           </NavLink>
         </nav>
         <div className="admin-topbar-actions">
-          <span className="admin-user-label">{name}</span>
+          <span className="admin-user-label">
+            <span className="admin-role-badge">管理员</span>
+            {name}
+          </span>
           <button type="button" className="logout-btn" onClick={logout}>
             退出管理端
           </button>
