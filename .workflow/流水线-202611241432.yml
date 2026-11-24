@@ -1,6 +1,11 @@
 version: "1.0"
 name: 构建、部署到自有主机
 displayName: 构建、部署到自有主机
+triggers:
+  trigger: auto
+  push:
+    - matchType: PRECISE
+      branch: master
 stages:
 - name: 构建
   displayName: 构建
@@ -8,18 +13,16 @@ stages:
   trigger: auto
   steps:
   - step: build@nodejs
-    name: ""
+    name: nodejs_build
     displayName: Nodejs 构建
     nodeVersion: 20.10.0
     commands:
     - npm config set registry https://registry.npmmirror.com
-    - cd frontend
-    - npm install
-    - npm run build
+    - cd frontend && npm install && npm run build
     artifacts:
     - name: BUILD_ARTIFACT
       path:
-      - frontend/dis
+      - frontend/dist
       type: .tar.gz
     caches:
     - "~/.npm"
@@ -36,7 +39,7 @@ stages:
   trigger: auto
   steps:
   - step: deploy@agent
-    name: ""
+    name: host_deploy
     displayName: 主机部署
     deployArtifact:
     - name: output
@@ -47,6 +50,7 @@ stages:
       artifactName: output
       artifactVersion: latest
     script: |-
+      set -e
       cd /opt/apex-ai
       chmod +x deploy.sh
       bash deploy.sh
@@ -57,8 +61,6 @@ stages:
     notify: []
     strategy:
       retry: "0"
-triggers:
-  trigger: manual
 notify: []
 strategy:
   blocking: true
