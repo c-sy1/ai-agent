@@ -273,11 +273,14 @@ def _amap_place_search(query: str, key: str) -> dict | None:
     }
 
 
-def _amap_geocode(query: str, key: str) -> dict | None:
-    """地址地理编码。"""
+def _amap_geocode(query: str, key: str, city: str = "") -> dict | None:
+    """地址地理编码（可带 city 避免串到别的城市）。"""
+    params: dict[str, Any] = {"key": key, "address": query}
+    if city:
+        params["city"] = city
     data = _amap_get(
         "https://restapi.amap.com/v3/geocode/geo",
-        {"key": key, "address": query},
+        params,
     )
     if str(data.get("status")) != "1":
         _raise_amap_status(data, query)
@@ -313,12 +316,11 @@ def amap_realtime(query: str) -> dict:
     if len(q) < 2:
         raise ValueError("请提供更完整的地名")
 
-    # 含路/街/号 → 先地理编码；学校商场等 → 先 POI
-    address_like = bool(re.search(r"[路街道巷号门弄苑区园]", q))
-    if address_like:
-        point = _amap_geocode(q, key) or _amap_place_search(q, key)
-    else:
-        point = _amap_place_search(q, key) or _amap_geocode(q, key)
+    city = _guess_city(q)
+    # 一律先 POI（带城市更准），再地理编码；避免「西大街」串到外地
+    point = _amap_place_search(q, key)
+    if point is None:
+        point = _amap_geocode(q, key, city=city)
     if point is None:
         raise ValueError(f"未找到「{q}」，请换个更具体的名称再试（可加城市，如：保定西大街）")
     return point
