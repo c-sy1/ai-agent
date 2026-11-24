@@ -1088,6 +1088,44 @@ a.user-bar-link.active {
   font-weight: 600;
 }
 
+.login-way {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.login-way button {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.login-way button.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(108, 92, 231, 0.08);
+  font-weight: 600;
+}
+
+.login-links {
+  display: flex;
+  justify-content: flex-end;
+  margin: -6px 0 14px;
+}
+
+.login-links .linkish {
+  border: none;
+  background: none;
+  color: var(--primary);
+  font-size: 13px;
+  padding: 0;
+  cursor: pointer;
+}
+
 .form-field {
   margin-bottom: 18px;
 }
