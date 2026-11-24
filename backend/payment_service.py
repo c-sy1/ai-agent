@@ -41,15 +41,15 @@ def _read_key(raw: str, path_env: str) -> str:
     if path:
         resolved = _resolve_key_path(path)
         if resolved is not None:
-            text = resolved.read_text(encoding="utf-8").strip()
+            text = resolved.read_text(encoding="utf-8-sig").strip()
             if "在这里粘贴" in text or "粘贴你的应用私钥" in text:
                 return ""
             return text
     text = (raw or "").strip()
     if not text:
         return ""
-    # 支持 .env 里用 \n 写成一行
-    return text.replace("\\n", "\n").strip()
+    # 支持 .env 里用 \n 写成一行；去掉 UTF-8 BOM
+    return text.replace("\\n", "\n").strip().lstrip("\ufeff")
 
 
 def alipay_configured() -> bool:
@@ -60,7 +60,10 @@ def alipay_configured() -> bool:
         os.getenv("ALIPAY_ALIPAY_PUBLIC_KEY", "") or os.getenv("ALIPAY_PUBLIC_KEY", ""),
         "ALIPAY_PUBLIC_KEY_PATH",
     )
-    return bool(app_id and priv and pub and "BEGIN" in priv)
+    priv = (priv or "").lstrip("\ufeff")
+    pub = (pub or "").lstrip("\ufeff")
+    # 应用私钥常见为 BEGIN PRIVATE KEY / BEGIN RSA PRIVATE KEY
+    return bool(app_id and priv and pub and "BEGIN" in priv.upper())
 
 
 def _gateway() -> str:

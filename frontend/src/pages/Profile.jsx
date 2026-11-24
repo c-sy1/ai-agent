@@ -271,9 +271,18 @@ export default function Profile() {
         <h2 className="panel-title">开通 VIP（支付宝充值）</h2>
         <p className="profile-desc" style={{ marginBottom: 12 }}>
           VIP：更高对话/生图额度，解锁 AI 视频与 PPT 下载。支付成功后自动开通。
-          {!payReady && (
+          {!loading && payReady && (
+            <span style={{ color: "#636e72", display: "block", marginTop: 6 }}>
+              支付宝参数已就绪。若开放平台应用仍在「审核中」，正式收款需等审核通过；此前可用管理端手动开通 VIP。
+            </span>
+          )}
+          {!loading && !payReady && (
             <span style={{ color: "#c0392b", display: "block", marginTop: 6 }}>
-              当前未配置支付宝商户参数，无法在线支付。请在 backend/.env 填写 ALIPAY_APP_ID 等；期间可由管理员后台开通。
+              服务器未读到完整支付宝参数（APP_ID + 密钥文件）。请确认云主机
+              <code> backend/.env </code>
+              与
+              <code> backend/keys/ </code>
+              已配置并已重启服务；期间可由管理端开通 VIP。
             </span>
           )}
         </p>
@@ -286,7 +295,7 @@ export default function Profile() {
               <button
                 type="button"
                 className="btn-primary"
-                disabled={!!paying || !payReady}
+                disabled={!!paying || loading || !payReady}
                 onClick={() => buy(p.id)}
               >
                 {paying === p.id ? "创建订单…" : payReady ? "去支付宝支付" : "待配置支付"}
