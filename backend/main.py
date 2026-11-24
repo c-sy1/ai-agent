@@ -26,21 +26,31 @@ from auth_service import (
 )
 from chat_service import chat_in_conversation
 from tool_service import run_tool, run_media
-from map_service import geocode_place, list_places, parse_map_marker, realtime_enabled
+from map_service import (
+    geocode_place,
+    list_places,
+    parse_all_map_markers,
+    parse_map_marker,
+    realtime_enabled,
+)
 
 from media_service import GENERATED_ROOT, MediaError
 from database import (
     Agent,
+    ChatFeedback,
     ChatMessage,
     Conversation,
     HotTopic,
+    KnowledgeDoc,
     RechargeOrder,
     SmsLog,
     Tool,
     User,
+    SessionLocal,
     get_db,
     init_db,
 )
+from knowledge_service import KB_CATEGORIES, ensure_seed_docs, list_docs
 from email_service import (
     EMAIL_SCENES,
     email_configured,
@@ -96,6 +106,8 @@ app.add_middleware(
 
 init_db()
 seed()
+with SessionLocal() as _db:
+    ensure_seed_docs(_db)
 
 GENERATED_ROOT.mkdir(parents=True, exist_ok=True)
 app.mount("/generated", StaticFiles(directory=str(GENERATED_ROOT)), name="generated")
@@ -937,13 +949,24 @@ def conversation_messages(
         .order_by(ChatMessage.id)
         .all()
     )
+    fb_map = {
+        f.message_id: f.rating
+        for f in db.query(ChatFeedback)
+        .filter(
+            ChatFeedback.user_id == user_id,
+            ChatFeedback.message_id.in_([r.id for r in rows] or [-1]),
+        )
+        .all()
+    }
     return {
         "code": 200,
         "data": [
             {
+                "id": r.id,
                 "role": r.role,
                 "content": r.content,
                 "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "my_rating": fb_map.get(r.id),
             }
             for r in rows
         ],
@@ -976,6 +999,16 @@ def chat(
         raise HTTPException(status_code=404, detail=str(e)) from e
 
     map_point = parse_map_marker(answer)
+    maps = parse_all_map_markers(answer)
+    last_ai = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.conversation_id == conv_id,
+            ChatMessage.role == "ai",
+        )
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
     return {
         "code": 200,
         "msg": "调用成功",
@@ -983,8 +1016,170 @@ def chat(
             "answer": answer,
             "conversation_id": conv_id,
             "map": map_point,
+            "maps": maps,
+            "message_id": last_ai.id if last_ai else None,
         },
     }
+
+
+class FeedbackReq(BaseModel):
+    user_id: int
+    message_id: int
+    rating: str  # up | down
+    comment: str = ""
+
+
+class KnowledgeCreateReq(BaseModel):
+    title: str
+    content: str
+    category: str = "景点介绍"
+
+
+@app.post("/api/feedback")
+def submit_feedback(
+    req: FeedbackReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    assert_self_or_admin(auth, req.user_id)
+    rating = (req.rating or "").strip().lower()
+    if rating not in ("up", "down"):
+        raise HTTPException(status_code=400, detail="rating 只能是 up 或 down")
+    msg = db.get(ChatMessage, req.message_id)
+    if msg is None or msg.role != "ai":
+        raise HTTPException(status_code=404, detail="消息不存在")
+    if msg.user_id != req.user_id and not auth.is_admin:
+        # 消息归属会话用户：ChatMessage.user_id 为发送对话的用户
+        pass
+    row = (
+        db.query(ChatFeedback)
+        .filter(
+            ChatFeedback.message_id == req.message_id,
+            ChatFeedback.user_id == req.user_id,
+        )
+        .first()
+    )
+    if row is None:
+        row = ChatFeedback(
+            message_id=req.message_id,
+            conversation_id=msg.conversation_id,
+            user_id=req.user_id,
+            rating=rating,
+            comment=(req.comment or "").strip()[:500],
+        )
+        db.add(row)
+    else:
+        row.rating = rating
+        row.comment = (req.comment or "").strip()[:500]
+    db.commit()
+    return {"code": 200, "msg": "已记录反馈", "data": {"rating": rating}}
+
+
+@app.get("/api/admin/feedback")
+def admin_feedback(
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin(auth)
+    rows = (
+        db.query(ChatFeedback)
+        .order_by(ChatFeedback.id.desc())
+        .limit(200)
+        .all()
+    )
+    out = []
+    for f in rows:
+        msg = db.get(ChatMessage, f.message_id)
+        user = db.get(User, f.user_id)
+        out.append(
+            {
+                "id": f.id,
+                "rating": f.rating,
+                "comment": f.comment,
+                "user_id": f.user_id,
+                "username": user.username if user else "",
+                "message_id": f.message_id,
+                "conversation_id": f.conversation_id,
+                "content_preview": (msg.content or "")[:160] if msg else "",
+                "created_at": f.created_at.isoformat() if f.created_at else "",
+            }
+        )
+    return {"code": 200, "data": out}
+
+
+@app.get("/api/knowledge/categories")
+def knowledge_categories(auth: User = Depends(get_current_user)):
+    return {"code": 200, "data": KB_CATEGORIES}
+
+
+@app.get("/api/knowledge/docs")
+def knowledge_docs(
+    category: str | None = Query(None),
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    rows = list_docs(db, category)
+    return {
+        "code": 200,
+        "data": [
+            {
+                "id": r.id,
+                "category": r.category,
+                "title": r.title,
+                "content": r.content,
+                "created_at": r.created_at.isoformat() if r.created_at else "",
+            }
+            for r in rows
+        ],
+    }
+
+
+@app.post("/api/knowledge/docs")
+def knowledge_create(
+    req: KnowledgeCreateReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    cat = (req.category or "").strip()
+    if cat not in KB_CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"分类必须是：{' / '.join(KB_CATEGORIES)}",
+        )
+    title = (req.title or "").strip()
+    content = (req.content or "").strip()
+    if not title or not content:
+        raise HTTPException(status_code=400, detail="标题和内容不能为空")
+    row = KnowledgeDoc(
+        category=cat,
+        title=title[:200],
+        content=content,
+        user_id=auth.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "code": 200,
+        "msg": "已保存",
+        "data": {"id": row.id, "category": row.category, "title": row.title},
+    }
+
+
+@app.post("/api/knowledge/docs/{doc_id}/remove")
+def knowledge_remove(
+    doc_id: int,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    row = db.get(KnowledgeDoc, doc_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if int(auth.is_admin or 0) != 1 and row.user_id != auth.id:
+        raise HTTPException(status_code=403, detail="无权删除")
+    db.delete(row)
+    db.commit()
+    return {"code": 200, "msg": "已删除"}
 
 
 @app.get("/api/session/{user_id}/history")

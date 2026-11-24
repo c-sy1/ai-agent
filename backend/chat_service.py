@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -23,9 +24,46 @@ from media_service import (
 )
 from quota_service import QuotaExceededError, require_and_consume
 from map_service import format_map_answer, format_map_error, try_resolve_map
+from route_service import try_build_route
 from search_service import fetch_search, is_search_question
 from vip_service import VIP_FEATURE_VIDEO, VipRequiredError, require_vip
 from weather_service import fetch_weather, is_weather_question
+
+
+def _kb_context(db: Session, question: str) -> str:
+    """简易知识库检索：按分类关键词匹配文档片段，注入系统提示。"""
+    from database import KnowledgeDoc
+
+    q = (question or "").strip()
+    if not q:
+        return ""
+    cat = None
+    if any(k in q for k in ("红色", "军校", "狼牙山", "抗战", "革命")):
+        cat = "红色文化"
+    elif any(k in q for k in ("景点", "景区", "公园", "博物馆", "白洋淀", "莲花池")):
+        cat = "景点介绍"
+    elif any(k in q for k in ("历史", "人文", "直隶", "文化")):
+        cat = "历史人文"
+
+    query = db.query(KnowledgeDoc)
+    if cat:
+        query = query.filter(KnowledgeDoc.category == cat)
+    rows = query.order_by(KnowledgeDoc.id.desc()).limit(40).all()
+    hits = []
+    for r in rows:
+        blob = f"{r.title}\n{r.content}"
+        if any(ch in blob for ch in q if len(ch) > 1) or any(
+            w in blob for w in re.findall(r"[\u4e00-\u9fff]{2,}", q)[:8]
+        ):
+            hits.append(f"【{r.category}/{r.title}】\n{r.content[:800]}")
+        if len(hits) >= 3:
+            break
+    if not hits and cat:
+        for r in rows[:2]:
+            hits.append(f"【{r.category}/{r.title}】\n{r.content[:800]}")
+    if not hits:
+        return ""
+    return "\n\n".join(hits)
 
 PM_INTERVIEW_REPLY = """产品经理面试通常涵盖以下六大模块，建议逐条准备：
 
@@ -184,8 +222,12 @@ def chat_in_conversation(
         else (
             "你是 Apex AI 全能助手，用简洁清晰的中文回答。"
             "你会记住并使用当前会话中的历史消息来连贯对话。"
+            "若涉及保定文旅，可结合知识库资料回答，勿编造未提供的史实。"
         )
     )
+    kb = _kb_context(db, question)
+    if kb:
+        system_prompt += f"\n\n【文旅知识库参考】\n{kb}"
 
     history_rows = (
         db.query(ChatMessage)
@@ -219,6 +261,18 @@ def chat_in_conversation(
                 f"🔒 {e}\n\n"
                 "开通入口：左下角进入「个人主页」选择套餐充值。"
             )
+    # 文旅路线工具：一日游行程 + 多点地图标记
+    if answer is None:
+        route_ans = try_build_route(question)
+        if route_ans is not None:
+            try:
+                require_and_consume(db, user, "chat")
+                answer = route_ans
+            except QuotaExceededError as e:
+                answer = (
+                    f"🔒 {e}\n\n"
+                    "开通入口：左下角进入「个人主页」选择套餐充值。"
+                )
     # 地图工具：内置坐标优先，否则高德实时检索任意地点
     if answer is None:
         point = try_resolve_map(question)

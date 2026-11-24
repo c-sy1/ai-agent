@@ -208,6 +208,52 @@ class Agent(Base):
     sort_order = Column(Integer, nullable=False, default=0)
 
 
+class ChatFeedback(Base):
+    """对话点赞/踩反馈。"""
+
+    __tablename__ = "chat_feedbacks"
+    __table_args__ = (
+        UniqueConstraint("message_id", "user_id", name="uq_feedback_msg_user"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    message_id = Column(
+        Integer,
+        ForeignKey("chat_messages.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    conversation_id = Column(Integer, nullable=False, index=True, default=0)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    rating = Column(String(10), nullable=False)  # up | down
+    comment = Column(String(500), nullable=False, default="")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class KnowledgeDoc(Base):
+    """文旅知识库文档（按分类）。"""
+
+    __tablename__ = "knowledge_docs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    category = Column(String(40), nullable=False, index=True)  # 红色文化/景点介绍/历史人文
+    title = Column(String(200), nullable=False)
+    content = Column(Text, nullable=False)
+    user_id = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 def _migrate_tool_columns():
     from sqlalchemy import inspect, text
 

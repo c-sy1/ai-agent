@@ -1506,6 +1506,36 @@ a.user-bar-link.active {
   margin-left: 8px;
 }
 
+.chat-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 16px 0;
+}
+
+.msg-feedback {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.msg-feedback button {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 8px;
+  width: 36px;
+  height: 28px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.msg-feedback button:hover,
+.msg-feedback button.active {
+  opacity: 1;
+  border-color: var(--primary);
+  background: rgba(108, 92, 231, 0.08);
+}
+
 /* Map tool: left chat + right Amap */
 .map-page {
   display: flex;

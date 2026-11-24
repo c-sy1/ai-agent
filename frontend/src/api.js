@@ -208,6 +208,16 @@ export const api = {
     request("/api/admin/vip/revoke", { method: "POST", body: JSON.stringify(body) }),
   adminRecharges: (adminUserId) =>
     request(`/api/admin/recharges?admin_user_id=${adminUserId}`),
+  submitFeedback: (body) =>
+    request("/api/feedback", { method: "POST", body: JSON.stringify(body) }),
+  adminFeedback: () => request("/api/admin/feedback"),
+  knowledgeCategories: () => request("/api/knowledge/categories"),
+  knowledgeDocs: (category) =>
+    request(`/api/knowledge/docs${category ? `?category=${encodeURIComponent(category)}` : ""}`),
+  knowledgeCreate: (body) =>
+    request("/api/knowledge/docs", { method: "POST", body: JSON.stringify(body) }),
+  knowledgeRemove: (id) =>
+    request(`/api/knowledge/docs/${id}/remove`, { method: "POST", body: "{}" }),
 };
 
 export function getSession() {

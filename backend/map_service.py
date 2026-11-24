@@ -387,17 +387,24 @@ _MAP_MARKER_RE = re.compile(
 
 
 def parse_map_marker(text: str) -> dict | None:
-    m = _MAP_MARKER_RE.search(text or "")
-    if not m:
-        return None
-    try:
-        return {
-            "lng": float(m.group(1)),
-            "lat": float(m.group(2)),
-            "name": m.group(3).strip(),
-        }
-    except ValueError:
-        return None
+    maps = parse_all_map_markers(text)
+    return maps[0] if maps else None
+
+
+def parse_all_map_markers(text: str) -> list[dict]:
+    out: list[dict] = []
+    for m in _MAP_MARKER_RE.finditer(text or ""):
+        try:
+            out.append(
+                {
+                    "lng": float(m.group(1)),
+                    "lat": float(m.group(2)),
+                    "name": m.group(3).strip(),
+                }
+            )
+        except ValueError:
+            continue
+    return out
 
 
 def strip_map_marker(text: str) -> str:

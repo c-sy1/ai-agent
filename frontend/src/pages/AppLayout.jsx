@@ -25,6 +25,12 @@ export default function AppLayout() {
           <NavLink to="/toolbox" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
             🧰 工具箱
           </NavLink>
+          <NavLink to="/map" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+            🗺️ 地图/路线
+          </NavLink>
+          <NavLink to="/knowledge" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+            📚 文旅知识库
+          </NavLink>
           <NavLink to="/agents" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
             🤖 智能体
           </NavLink>
@@ -35,6 +41,14 @@ export default function AppLayout() {
           >
             网页版对话记录
           </NavLink>
+          {user?.is_admin ? (
+            <NavLink
+              to="/feedback-admin"
+              className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+            >
+              📝 对话反馈
+            </NavLink>
+          ) : null}
         </nav>
         <NavLink
           to="/profile"

@@ -120,6 +120,16 @@
       "system_prompt": "你是旅游规划师。输出：每日行程（上午/下午/晚上）、交通方式、预估花费区间、预订提醒、避坑提示。Markdown 日程表。"
     },
     {
+      "name": "文旅路线规划",
+      "description": "规划保定/白洋淀/狼牙山一日游，文字行程并在地图按序打点。",
+      "category": "life",
+      "tag": "文旅",
+      "icon": "🧭",
+      "sort_order": 19,
+      "input_placeholder": "例如：帮我规划保定一日游",
+      "system_prompt": "你是文旅路线规划助手。根据用户目的地输出分时段行程，并配合地图工具标记景点顺序。"
+    },
+    {
       "name": "药品查询工具",
       "description": "拍照识别药品成分与常见副作用。",
       "category": "life",

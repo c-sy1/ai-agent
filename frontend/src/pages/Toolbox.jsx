@@ -79,7 +79,8 @@ export default function Toolbox() {
   const [loading, setLoading] = useState(true);
 
   const openTool = (tool) => {
-    if ((tool?.name || "").includes("地图")) {
+    const name = tool?.name || "";
+    if (name.includes("地图") || name.includes("路线")) {
       navigate("/map");
       return;
     }

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, getSession } from "../api";
+import MessageFeedback from "../components/MessageFeedback";
 import RichContent from "../components/RichContent";
 
-const QUICK = ["保定西大街在哪", "保定理工学院位置", "天安门在哪"];
+const QUICK = ["帮我规划保定一日游", "保定西大街在哪", "狼牙山在哪"];
 
 function loadAmapScript(key, securityCode) {
   return new Promise((resolve, reject) => {
@@ -48,23 +49,39 @@ export default function MapChat() {
   const markersRef = useRef([]);
   const listRef = useRef(null);
 
-  const flyTo = useCallback(async (point) => {
-    if (!point || point.lng == null || point.lat == null) return;
+  const plotStops = useCallback((points) => {
+    const list = (points || []).filter((p) => p && p.lng != null && p.lat != null);
+    if (!list.length || !window.AMap || !mapInst.current) return;
     const AMap = window.AMap;
-    if (!AMap || !mapInst.current) return;
-    const pos = [Number(point.lng), Number(point.lat)];
-    const marker = new AMap.Marker({
-      position: pos,
-      title: point.name || "",
-      label: point.name
-        ? { content: `<div class="amap-label">${point.name}</div>`, direction: "top" }
-        : undefined,
+    list.forEach((point, idx) => {
+      const pos = [Number(point.lng), Number(point.lat)];
+      const label = list.length > 1 ? `${idx + 1}. ${point.name || ""}` : point.name || "";
+      const marker = new AMap.Marker({
+        position: pos,
+        title: point.name || "",
+        label: label
+          ? { content: `<div class="amap-label">${label}</div>`, direction: "top" }
+          : undefined,
+      });
+      mapInst.current.add(marker);
+      markersRef.current.push(marker);
     });
-    mapInst.current.add(marker);
-    markersRef.current.push(marker);
-    mapInst.current.setZoomAndCenter(13, pos);
-    setMapHint(`${point.name || "目标"} · ${point.lng}, ${point.lat}`);
+    if (list.length > 1) {
+      mapInst.current.setFitView(markersRef.current.slice(-list.length));
+      setMapHint(`路线共 ${list.length} 站 · 已按顺序标记`);
+    } else {
+      const p = list[0];
+      mapInst.current.setZoomAndCenter(13, [Number(p.lng), Number(p.lat)]);
+      setMapHint(`${p.name || "目标"} · ${p.lng}, ${p.lat}`);
+    }
   }, []);
+
+  const flyTo = useCallback(
+    async (point) => {
+      plotStops(point ? [point] : []);
+    },
+    [plotStops]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -159,8 +176,13 @@ export default function MapChat() {
       const answer = res.data?.answer || "";
       const mapPoint = res.data?.map;
       setCid(res.data?.conversation_id ?? cid);
-      setMessages((prev) => [...prev, { role: "ai", content: answer }]);
-      if (mapPoint) await flyTo(mapPoint);
+      setMessages((prev) => [
+        ...prev,
+        { role: "ai", content: answer, id: res.data?.message_id, my_rating: null },
+      ]);
+      const maps = res.data?.maps || [];
+      if (maps.length) plotStops(maps);
+      else if (mapPoint) flyTo(mapPoint);
     } catch (e) {
       setError(e.message || "发送失败");
       setMessages((prev) => prev.slice(0, -1));
@@ -227,9 +249,10 @@ export default function MapChat() {
                 <div className="bubble">{m.content}</div>
               </div>
             ) : (
-              <div key={i} className="msg-ai">
+              <div key={m.id || i} className="msg-ai">
                 <div className="bubble">
                   <RichContent content={m.content} />
+                  <MessageFeedback messageId={m.id} initialRating={m.my_rating} />
                 </div>
               </div>
             )

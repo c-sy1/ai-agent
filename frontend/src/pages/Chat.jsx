@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, getSession } from "../api";
 import ChatFooter from "../components/ChatFooter";
+import MessageFeedback from "../components/MessageFeedback";
 import RichContent from "../components/RichContent";
 
 function HistoryRow({
@@ -151,6 +152,27 @@ export default function Chat() {
     await loadMessages();
   };
 
+  const exportTxt = () => {
+    if (!messages.length) {
+      alert("当前没有可导出的消息");
+      return;
+    }
+    const lines = messages.map((m) => {
+      const who = m.role === "human" ? "我" : "AI";
+      const body = String(m.content || "")
+        .replace(/\[\[map:[^\]]+\]\]/g, "")
+        .replace(/\[\[video:[^\]]+\]\]/g, "[视频]")
+        .trim();
+      return `【${who}】\n${body}\n`;
+    });
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `apex-chat-${cid || "new"}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
   const selectConv = (id) => navigate(`/chat/${id}`);
 
   const handleSaveRename = async (id, title) => {
@@ -237,6 +259,11 @@ export default function Chat() {
         )}
       </aside>
       <div className="chat-main">
+        <div className="chat-toolbar">
+          <button type="button" className="chip" disabled={!messages.length} onClick={exportTxt}>
+            导出对话
+          </button>
+        </div>
         <div className="messages">
           {!cid && (
             <p style={{ textAlign: "center", color: "#636e72", marginTop: 80 }}>
@@ -245,13 +272,14 @@ export default function Chat() {
           )}
           {messages.map((m, i) =>
             m.role === "human" ? (
-              <div key={i} className="msg-user">
+              <div key={m.id || i} className="msg-user">
                 <div className="bubble">{m.content}</div>
               </div>
             ) : (
-              <div key={i} className="msg-ai">
+              <div key={m.id || i} className="msg-ai">
                 <div className="bubble">
                   <RichContent content={m.content} />
+                  <MessageFeedback messageId={m.id} initialRating={m.my_rating} />
                 </div>
               </div>
             )

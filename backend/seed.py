@@ -14,6 +14,7 @@ from database import (
     ROLE_AI,
     ROLE_HUMAN,
 )
+from knowledge_service import ensure_seed_docs
 
 DATA_FILE = Path(__file__).parent / "seed_data.json"
 
@@ -105,6 +106,7 @@ def seed():
                 )
 
         db.commit()
+        ensure_seed_docs(db)
 
         if demo and db.query(Conversation).filter(Conversation.user_id == demo.id).count() == 0:
             pm_agent = db.query(Agent).filter(Agent.name == "智囊折叠器").first()
