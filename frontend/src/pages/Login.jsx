@@ -376,16 +376,14 @@ export default function Login({ portal = "user" }) {
 
         <p className="login-hint">
           {isAdminPortal
-            ? "仅管理员账号可进入。用户请使用用户端登录。"
-            : "验证码发送至用户邮箱。管理员请走管理端，不可在此登录。"}
+            ? "仅管理员账号可进入。普通用户请使用用户端地址登录，无法在此进入后台。"
+            : "验证码发送至用户邮箱。本页仅普通用户登录/注册。"}
         </p>
-        <p className="login-hint" style={{ marginTop: 8 }}>
-          {isAdminPortal ? (
+        {isAdminPortal ? (
+          <p className="login-hint" style={{ marginTop: 8 }}>
             <Link to="/login">← 前往用户端登录</Link>
-          ) : (
-            <Link to="/admin/login">管理员入口 →</Link>
-          )}
-        </p>
+          </p>
+        ) : null}
       </div>
     </div>
   );
