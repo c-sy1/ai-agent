@@ -97,6 +97,32 @@ export const api = {
     request("/api/register", { method: "POST", body: JSON.stringify(body) }),
   login: (body) =>
     request("/api/login", { method: "POST", body: JSON.stringify(body) }),
+  loginPhone: (body) =>
+    request("/api/login/phone", { method: "POST", body: JSON.stringify(body) }),
+  loginEmail: (body) =>
+    request("/api/login/email", { method: "POST", body: JSON.stringify(body) }),
+  sendSms: (body) =>
+    request("/api/sms/send", { method: "POST", body: JSON.stringify(body) }),
+  sendEmailCode: (body) =>
+    request("/api/email/send", { method: "POST", body: JSON.stringify(body) }),
+  resetPassword: (body) =>
+    request("/api/password/reset", { method: "POST", body: JSON.stringify(body) }),
+  bindPhone: (body) =>
+    request("/api/users/phone/bind", { method: "POST", body: JSON.stringify(body) }),
+  mySms: () => request("/api/sms/mine"),
+  adminMfaStatus: () => request("/api/admin/mfa/status"),
+  adminMfaSend: () => request("/api/admin/mfa/send", { method: "POST", body: "{}" }),
+  adminMfaVerify: (body) =>
+    request("/api/admin/mfa/verify", { method: "POST", body: JSON.stringify(body) }),
+  adminDisableUser: (body) =>
+    request("/api/admin/users/disable", { method: "POST", body: JSON.stringify(body) }),
+  adminResetPassword: (body) =>
+    request("/api/admin/users/reset-password", { method: "POST", body: JSON.stringify(body) }),
+  adminSetQuota: (body) =>
+    request("/api/admin/users/quota", { method: "POST", body: JSON.stringify(body) }),
+  adminApproveOrder: (body) =>
+    request("/api/admin/orders/approve", { method: "POST", body: JSON.stringify(body) }),
+  adminSms: () => request("/api/admin/sms"),
   profile: (userId) => request(`/api/users/${userId}/profile`),
   updateProfile: (body) =>
     request("/api/users/profile/update", {
@@ -162,10 +188,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ user_id: userId }),
     }),
-  vipContinuePay: (orderId, userId) =>
+  vipContinuePay: (orderId, userId, smsCode = "") =>
     request(`/api/vip/orders/${orderId}/pay`, {
       method: "POST",
-      body: JSON.stringify({ user_id: userId }),
+      body: JSON.stringify({ user_id: userId, sms_code: smsCode }),
     }),
   adminUsers: (adminUserId) =>
     request(`/api/admin/users?admin_user_id=${adminUserId}`),

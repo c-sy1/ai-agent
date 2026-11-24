@@ -40,6 +40,12 @@ class User(Base):
     vip_expire_at = Column(DateTime, nullable=True)
     balance = Column(Float, nullable=False, default=0.0)
     is_admin = Column(Integer, nullable=False, default=0)
+    is_disabled = Column(Integer, nullable=False, default=0)
+    phone = Column(String(20), nullable=True, unique=True)
+    last_login_ip = Column(String(64), nullable=False, default="")
+    admin_mfa_until = Column(DateTime, nullable=True)
+    quota_chat_extra = Column(Integer, nullable=False, default=0)
+    quota_image_extra = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
     conversations = relationship(
@@ -146,6 +152,23 @@ class UsageDaily(Base):
     )
 
 
+class SmsLog(Base):
+    """短信记录。kind=code 为验证码，kind=notice 为通知（不含验证码）。"""
+
+    __tablename__ = "sms_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    phone = Column(String(120), nullable=False, default="", index=True)  # 也可存 mail:邮箱
+    user_id = Column(Integer, nullable=True, index=True)
+    kind = Column(String(20), nullable=False, default="code")  # code | notice
+    scene = Column(String(40), nullable=False, default="")
+    content = Column(String(500), nullable=False, default="")
+    code = Column(String(10), nullable=False, default="")
+    used = Column(Integer, nullable=False, default=0)
+    fail_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
 class HotTopic(Base):
     __tablename__ = "hot_topics"
 
@@ -224,8 +247,21 @@ def _migrate_tool_columns():
                 alters.append("ALTER TABLE users ADD COLUMN balance FLOAT NOT NULL DEFAULT 0")
             if "is_admin" not in unames:
                 alters.append("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+            if "is_disabled" not in unames:
+                alters.append("ALTER TABLE users ADD COLUMN is_disabled INTEGER NOT NULL DEFAULT 0")
+            if "phone" not in unames:
+                alters.append("ALTER TABLE users ADD COLUMN phone VARCHAR(20)")
+            if "last_login_ip" not in unames:
+                alters.append("ALTER TABLE users ADD COLUMN last_login_ip VARCHAR(64) NOT NULL DEFAULT ''")
+            if "admin_mfa_until" not in unames:
+                alters.append("ALTER TABLE users ADD COLUMN admin_mfa_until DATETIME")
+            if "quota_chat_extra" not in unames:
+                alters.append("ALTER TABLE users ADD COLUMN quota_chat_extra INTEGER NOT NULL DEFAULT 0")
+            if "quota_image_extra" not in unames:
+                alters.append("ALTER TABLE users ADD COLUMN quota_image_extra INTEGER NOT NULL DEFAULT 0")
             for sql in alters:
                 conn.execute(text(sql))
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_phone ON users(phone)"))
         if "recharge_orders" in tables:
             onames = {c["name"] for c in insp.get_columns("recharge_orders")}
             if "out_trade_no" not in onames:

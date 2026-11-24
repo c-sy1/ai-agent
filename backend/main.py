@@ -20,6 +20,7 @@ from auth_service import (
     is_hashed_password,
     record_login_failure,
     require_admin,
+    require_admin_mfa,
     verify_password,
 )
 from chat_service import chat_in_conversation
@@ -32,10 +33,36 @@ from database import (
     Conversation,
     HotTopic,
     RechargeOrder,
+    SmsLog,
     Tool,
     User,
     get_db,
     init_db,
+)
+from email_service import (
+    EMAIL_SCENES,
+    email_configured,
+    mask_email,
+    normalize_email,
+    send_email_code,
+    user_by_email,
+    verify_email_code,
+)
+from sms_service import (
+    CODE_SCENES,
+    alert_login_attack,
+    assert_phone_free,
+    grant_admin_mfa,
+    mask_phone,
+    mfa_active,
+    normalize_phone,
+    note_remote_login,
+    notify_admin_risk,
+    notify_user,
+    notify_vip_opened,
+    send_code,
+    user_by_phone,
+    verify_code,
 )
 from seed import seed
 from payment_service import (
@@ -77,11 +104,71 @@ class RegisterReq(BaseModel):
     email: str
     password: str = Field(min_length=6, max_length=72)
     nickname: str = ""
+    phone: str = ""
+    sms_code: str = ""  # 兼容旧字段；优先用 email_code
+    email_code: str = ""
 
 
 class LoginReq(BaseModel):
     username: str
     password: str
+
+
+class SmsSendReq(BaseModel):
+    phone: str
+    scene: str
+
+
+class EmailSendReq(BaseModel):
+    email: str
+    scene: str
+
+
+class PhoneLoginReq(BaseModel):
+    phone: str
+    sms_code: str
+
+
+class EmailLoginReq(BaseModel):
+    email: str
+    email_code: str
+
+
+class ResetPasswordReq(BaseModel):
+    phone: str = ""
+    sms_code: str = ""
+    email: str = ""
+    email_code: str = ""
+    new_password: str = Field(min_length=6, max_length=72)
+
+
+class BindPhoneReq(BaseModel):
+    phone: str
+    sms_code: str
+
+
+class AdminMfaReq(BaseModel):
+    sms_code: str
+
+
+class AdminDisableReq(BaseModel):
+    user_id: int
+    disabled: bool = True
+
+
+class AdminResetPasswordReq(BaseModel):
+    user_id: int
+    new_password: str = Field(min_length=6, max_length=72)
+
+
+class AdminQuotaReq(BaseModel):
+    user_ids: list[int]
+    chat_extra: int = 0
+    image_extra: int = 0
+
+
+class AdminApproveOrderReq(BaseModel):
+    order_id: int
 
 
 class ChatReq(BaseModel):
@@ -160,9 +247,9 @@ def _conv_item(r: Conversation) -> dict:
 @app.post("/api/register")
 def register(req: RegisterReq, db: Session = Depends(get_db)):
     username = req.username.strip()
-    email = req.email.strip().lower()
-    if not username or not email:
-        raise HTTPException(status_code=400, detail="用户名和邮箱不能为空")
+    email = normalize_email(req.email)
+    if not username:
+        raise HTTPException(status_code=400, detail="用户名不能为空")
     exists = (
         db.query(User)
         .filter(or_(User.username == username, User.email == email))
@@ -171,11 +258,19 @@ def register(req: RegisterReq, db: Session = Depends(get_db)):
     if exists:
         raise HTTPException(status_code=400, detail="用户名或邮箱已被注册")
 
+    code = (req.email_code or req.sms_code or "").strip()
+    verify_email_code(db, email, "register", code)
+
+    phone = ""
+    if (req.phone or "").strip():
+        phone = assert_phone_free(db, req.phone)
+
     user = User(
         username=username,
         email=email,
         password=hash_password(req.password),
         nickname=(req.nickname or username).strip()[:50],
+        phone=phone or None,
     )
     db.add(user)
     try:
@@ -195,12 +290,19 @@ def register(req: RegisterReq, db: Session = Depends(get_db)):
 def login(req: LoginReq, request: Request, db: Session = Depends(get_db)):
     username = (req.username or "").strip()
     ip = request.client.host if request.client else None
-    check_login_rate_limit(username, ip)
+    try:
+        check_login_rate_limit(username, ip)
+    except HTTPException as exc:
+        if exc.status_code == 429:
+            alert_login_attack(db, ip)
+        raise
 
     user = db.query(User).filter(User.username == username).first()
     if user is None or not verify_password(req.password, user.password or ""):
         record_login_failure(username, ip)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
+    if int(getattr(user, "is_disabled", 0) or 0) == 1:
+        raise HTTPException(status_code=403, detail="账号已禁用，请联系管理员")
 
     # 旧明文密码登录成功后自动升级为 bcrypt
     if not is_hashed_password(user.password or ""):
@@ -209,10 +311,215 @@ def login(req: LoginReq, request: Request, db: Session = Depends(get_db)):
         db.refresh(user)
 
     clear_login_failures(username, ip)
+    note_remote_login(db, user, ip)
+    db.refresh(user)
     return {
         "code": 200,
         "msg": "登录成功",
         "data": auth_payload_for(user),
+    }
+
+
+@app.post("/api/sms/send")
+def sms_send(req: SmsSendReq, db: Session = Depends(get_db)):
+    scene = (req.scene or "").strip()
+    if scene not in CODE_SCENES:
+        raise HTTPException(status_code=400, detail="该场景不发送验证码短信")
+    phone = normalize_phone(req.phone)
+    if scene == "admin_mfa":
+        raise HTTPException(status_code=400, detail="管理员二次验证请在登录后从后台发送")
+    if scene == "phone_login":
+        target = user_by_phone(db, phone)
+        if target is None:
+            raise HTTPException(status_code=404, detail="该手机号尚未绑定账号")
+        if int(getattr(target, "is_admin", 0) or 0) == 1:
+            raise HTTPException(
+                status_code=403,
+                detail="管理员禁止只用短信登录，请使用账号密码，进入后台时再做短信二次验证",
+            )
+    if scene == "register" and user_by_phone(db, phone) is not None:
+        raise HTTPException(status_code=400, detail="该手机号已绑定其他账号")
+    if scene == "reset_password" and user_by_phone(db, phone) is None:
+        raise HTTPException(status_code=404, detail="该手机号尚未绑定账号")
+    data = send_code(db, phone, scene)
+    return {"code": 200, "msg": "验证码已发送", "data": data}
+
+
+@app.post("/api/email/send")
+def email_send(req: EmailSendReq, db: Session = Depends(get_db)):
+    scene = (req.scene or "").strip()
+    if scene not in EMAIL_SCENES:
+        raise HTTPException(status_code=400, detail="该场景不发送邮箱验证码")
+    email = normalize_email(req.email)
+    if scene == "admin_mfa":
+        raise HTTPException(status_code=400, detail="管理员二次验证请在登录后从后台发送")
+    if scene == "email_login":
+        target = user_by_email(db, email)
+        if target is None:
+            raise HTTPException(status_code=404, detail="该邮箱尚未注册")
+        if int(getattr(target, "is_admin", 0) or 0) == 1:
+            raise HTTPException(
+                status_code=403,
+                detail="管理员禁止只用邮箱验证码登录，请使用账号密码，进入后台再做二次验证",
+            )
+    if scene == "register" and user_by_email(db, email) is not None:
+        raise HTTPException(status_code=400, detail="该邮箱已被注册")
+    if scene == "reset_password" and user_by_email(db, email) is None:
+        raise HTTPException(status_code=404, detail="该邮箱尚未注册")
+    data = send_email_code(db, email, scene)
+    return {"code": 200, "msg": "验证码已发送到邮箱", "data": data}
+
+
+@app.post("/api/login/phone")
+def login_by_phone(req: PhoneLoginReq, request: Request, db: Session = Depends(get_db)):
+    phone = normalize_phone(req.phone)
+    ip = request.client.host if request.client else None
+    try:
+        check_login_rate_limit(phone, ip)
+    except HTTPException as exc:
+        if exc.status_code == 429:
+            alert_login_attack(db, ip)
+        raise
+    user = user_by_phone(db, phone)
+    if user is None:
+        record_login_failure(phone, ip)
+        raise HTTPException(status_code=401, detail="手机号或验证码错误")
+    if int(getattr(user, "is_admin", 0) or 0) == 1:
+        raise HTTPException(
+            status_code=403,
+            detail="管理员禁止只用短信登录，请使用账号密码，进入后台时再做短信二次验证",
+        )
+    if int(getattr(user, "is_disabled", 0) or 0) == 1:
+        raise HTTPException(status_code=403, detail="账号已禁用，请联系管理员")
+    try:
+        verify_code(db, phone, "phone_login", req.sms_code)
+    except HTTPException:
+        record_login_failure(phone, ip)
+        raise
+    clear_login_failures(phone, ip)
+    note_remote_login(db, user, ip)
+    db.refresh(user)
+    return {"code": 200, "msg": "登录成功", "data": auth_payload_for(user)}
+
+
+@app.post("/api/login/email")
+def login_by_email(req: EmailLoginReq, request: Request, db: Session = Depends(get_db)):
+    email = normalize_email(req.email)
+    ip = request.client.host if request.client else None
+    try:
+        check_login_rate_limit(email, ip)
+    except HTTPException as exc:
+        if exc.status_code == 429:
+            alert_login_attack(db, ip)
+        raise
+    user = user_by_email(db, email)
+    if user is None:
+        record_login_failure(email, ip)
+        raise HTTPException(status_code=401, detail="邮箱或验证码错误")
+    if int(getattr(user, "is_admin", 0) or 0) == 1:
+        raise HTTPException(
+            status_code=403,
+            detail="管理员禁止只用邮箱验证码登录，请使用账号密码，进入后台再做二次验证",
+        )
+    if int(getattr(user, "is_disabled", 0) or 0) == 1:
+        raise HTTPException(status_code=403, detail="账号已禁用，请联系管理员")
+    try:
+        verify_email_code(db, email, "email_login", req.email_code)
+    except HTTPException:
+        record_login_failure(email, ip)
+        raise
+    clear_login_failures(email, ip)
+    note_remote_login(db, user, ip)
+    db.refresh(user)
+    return {"code": 200, "msg": "登录成功", "data": auth_payload_for(user)}
+
+
+@app.post("/api/password/reset")
+def reset_password(req: ResetPasswordReq, db: Session = Depends(get_db)):
+    # 优先邮箱重置（个人可用）；兼容旧手机短信重置
+    if (req.email or "").strip():
+        email = normalize_email(req.email)
+        user = user_by_email(db, email)
+        if user is None:
+            raise HTTPException(status_code=404, detail="该邮箱尚未注册")
+        if int(getattr(user, "is_admin", 0) or 0) == 1:
+            raise HTTPException(status_code=403, detail="管理员请联系另一名管理员重置")
+        verify_email_code(db, email, "reset_password", req.email_code or req.sms_code)
+        user.password = hash_password(req.new_password)
+        db.commit()
+        return {"code": 200, "msg": "密码已重置，请使用新密码登录"}
+
+    phone = normalize_phone(req.phone)
+    user = user_by_phone(db, phone)
+    if user is None:
+        raise HTTPException(status_code=404, detail="该手机号尚未绑定账号")
+    if int(getattr(user, "is_admin", 0) or 0) == 1:
+        raise HTTPException(status_code=403, detail="管理员不能只用短信重置密码，请联系另一名管理员")
+    verify_code(db, phone, "reset_password", req.sms_code)
+    user.password = hash_password(req.new_password)
+    db.commit()
+    return {"code": 200, "msg": "密码已重置，请使用新密码登录"}
+
+
+@app.post("/api/users/phone/bind")
+def bind_phone(
+    req: BindPhoneReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    phone = assert_phone_free(db, req.phone, except_user_id=auth.id)
+    verify_code(db, phone, "bind_phone", req.sms_code)
+    old = (auth.phone or "").strip()
+    auth.phone = phone
+    db.commit()
+    if old and old != phone:
+        from sms_service import send_notice
+
+        send_notice(
+            db,
+            old,
+            "phone_changed",
+            "你的账号手机号已更换。如非本人操作，请尽快联系管理员。",
+            user_id=auth.id,
+        )
+    db.refresh(auth)
+    return {"code": 200, "msg": "手机号已绑定", "data": auth_payload_for(auth)}
+
+
+@app.get("/api/sms/mine")
+def my_sms(
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    phone = (auth.phone or "").strip()
+    if phone:
+        rows = (
+            db.query(SmsLog)
+            .filter(or_(SmsLog.user_id == auth.id, SmsLog.phone == phone))
+            .order_by(SmsLog.id.desc())
+            .limit(20)
+            .all()
+        )
+    else:
+        rows = (
+            db.query(SmsLog)
+            .filter(SmsLog.user_id == auth.id)
+            .order_by(SmsLog.id.desc())
+            .limit(20)
+            .all()
+        )
+    return {
+        "code": 200,
+        "data": [
+            {
+                "id": r.id,
+                "kind": r.kind,
+                "scene": r.scene,
+                "content": r.content if r.kind == "notice" else "验证码短信（内容不回显）",
+                "created_at": r.created_at.isoformat() if r.created_at else "",
+            }
+            for r in rows
+        ],
     }
 
 
@@ -248,6 +555,7 @@ def get_profile(
             "username": user.username,
             "nickname": user.nickname or user.username,
             "email": user.email,
+            "phone": user.phone or "",
             "avatar": user.avatar or "",
             "created_at": user.created_at.isoformat() if user.created_at else None,
             "conversation_count": conv_count,
@@ -682,10 +990,12 @@ def _admin_or_403(db: Session, admin_user_id: int) -> User:
 class RechargeReq(BaseModel):
     user_id: int
     package_id: str
+    sms_code: str = ""
 
 
 class OrderActionReq(BaseModel):
     user_id: int
+    sms_code: str = ""
 
 
 class AdminGrantVipReq(BaseModel):
@@ -732,6 +1042,7 @@ def vip_recharge(
     """创建 VIP 订单并返回支付宝支付链接（支付成功后才开通）。"""
     assert_self_or_admin(auth, req.user_id)
     user = _user_or_404(db, req.user_id)
+    _require_pay_sms(db, user, req.sms_code)
     try:
         order, pay_url = create_vip_order(db, user, req.package_id)
     except PaymentConfigError as e:
@@ -809,7 +1120,8 @@ def vip_continue_pay(
 ):
     """待支付订单重新生成支付宝跳转链接。"""
     assert_self_or_admin(auth, req.user_id)
-    _user_or_404(db, req.user_id)
+    user = _user_or_404(db, req.user_id)
+    _require_pay_sms(db, user, req.sms_code)
     order = db.get(RechargeOrder, order_id)
     if order is None or order.user_id != req.user_id:
         raise HTTPException(status_code=404, detail="订单不存在")
@@ -898,13 +1210,95 @@ def vip_orders(
     }
 
 
+def _require_pay_sms(db: Session, user: User, sms_code: str) -> None:
+    email = (getattr(user, "email", None) or "").strip()
+    phone = (getattr(user, "phone", None) or "").strip()
+    if email:
+        verify_email_code(db, email, "pay_confirm", sms_code)
+        return
+    if not phone:
+        raise HTTPException(status_code=400, detail="下单前请确认邮箱可用，或绑定手机号完成验证")
+    verify_code(db, phone, "pay_confirm", sms_code)
+
+
+def _sms_row(r: SmsLog) -> dict:
+    return {
+        "id": r.id,
+        "phone": mask_phone(r.phone) if r.phone else "未绑定手机",
+        "kind": r.kind,
+        "scene": r.scene,
+        "content": r.content if r.kind == "notice" else "验证码短信",
+        "created_at": r.created_at.isoformat() if r.created_at else "",
+    }
+
+
+@app.get("/api/admin/mfa/status")
+def admin_mfa_status(auth: User = Depends(get_current_user)):
+    require_admin(auth)
+    until = getattr(auth, "admin_mfa_until", None)
+    return {
+        "code": 200,
+        "data": {
+            "phone": auth.phone or "",
+            "phone_bound": bool((auth.phone or "").strip()),
+            "email": mask_email(auth.email),
+            "email_bound": bool((auth.email or "").strip()),
+            "channel": "email" if (auth.email or "").strip() else "sms",
+            "smtp_ready": email_configured(),
+            "mfa_valid": mfa_active(auth),
+            "mfa_until": until.isoformat() if until else "",
+        },
+    }
+
+
+@app.post("/api/admin/mfa/send")
+def admin_mfa_send(
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin(auth)
+    email = (auth.email or "").strip()
+    phone = (auth.phone or "").strip()
+    # 优先邮箱（个人可真收）；无邮箱再走短信
+    if email:
+        data = send_email_code(db, email, "admin_mfa", user_id=auth.id)
+        return {"code": 200, "msg": "二次验证码已发送到邮箱", "data": data}
+    if not phone:
+        raise HTTPException(status_code=400, detail="请先完善账号邮箱，或绑定手机号后再做二次验证")
+    data = send_code(db, phone, "admin_mfa", user_id=auth.id)
+    return {"code": 200, "msg": "二次验证码已发送", "data": data}
+
+
+@app.post("/api/admin/mfa/verify")
+def admin_mfa_verify(
+    req: AdminMfaReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin(auth)
+    email = (auth.email or "").strip()
+    phone = (auth.phone or "").strip()
+    if email:
+        verify_email_code(db, email, "admin_mfa", req.sms_code)
+    elif phone:
+        verify_code(db, phone, "admin_mfa", req.sms_code)
+    else:
+        raise HTTPException(status_code=400, detail="请先完善邮箱或绑定手机号")
+    until = grant_admin_mfa(db, auth)
+    return {
+        "code": 200,
+        "msg": "二次验证通过，30 分钟内可进入后台",
+        "data": {"mfa_until": until.isoformat()},
+    }
+
+
 @app.get("/api/admin/users")
 def admin_list_users(
     admin_user_id: int = 0,
     db: Session = Depends(get_db),
     auth: User = Depends(get_current_user),
 ):
-    require_admin(auth)
+    require_admin_mfa(auth)
     rows = db.query(User).order_by(User.id.desc()).limit(200).all()
     return {
         "code": 200,
@@ -914,6 +1308,10 @@ def admin_list_users(
                 "username": u.username,
                 "nickname": u.nickname or u.username,
                 "email": u.email,
+                "phone": mask_phone(u.phone),
+                "is_disabled": bool(int(getattr(u, "is_disabled", 0) or 0)),
+                "quota_chat_extra": int(getattr(u, "quota_chat_extra", 0) or 0),
+                "quota_image_extra": int(getattr(u, "quota_image_extra", 0) or 0),
                 **vip_status(u),
             }
             for u in rows
@@ -927,11 +1325,13 @@ def admin_grant_vip(
     db: Session = Depends(get_db),
     auth: User = Depends(get_current_user),
 ):
-    require_admin(auth)
+    require_admin_mfa(auth)
     user = _user_or_404(db, req.user_id)
     extend_vip(user, req.days)
     db.commit()
     db.refresh(user)
+    notify_vip_opened(db, user, "管理员开通", req.days)
+    notify_admin_risk(db, auth, f"手动开通会员：用户 {user.username}，{req.days} 天")
     return {"code": 200, "msg": f"已开通 {req.days} 天 VIP", "data": vip_status(user)}
 
 
@@ -941,12 +1341,113 @@ def admin_revoke_vip(
     db: Session = Depends(get_db),
     auth: User = Depends(get_current_user),
 ):
-    require_admin(auth)
+    require_admin_mfa(auth)
     user = _user_or_404(db, req.user_id)
     revoke_vip(user)
     db.commit()
     db.refresh(user)
+    notify_user(db, user, "vip_opened", "会员状态变更：你的 VIP 已被管理员取消。")
+    notify_admin_risk(db, auth, f"取消会员：用户 {user.username}")
     return {"code": 200, "msg": "已取消 VIP", "data": vip_status(user)}
+
+
+@app.post("/api/admin/users/disable")
+def admin_disable_user(
+    req: AdminDisableReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin_mfa(auth)
+    user = _user_or_404(db, req.user_id)
+    if int(user.id) == int(auth.id):
+        raise HTTPException(status_code=400, detail="不能禁用自己的管理员账号")
+    user.is_disabled = 1 if req.disabled else 0
+    db.commit()
+    action = "禁用用户账号" if req.disabled else "启用用户账号"
+    notify_user(db, user, "admin_risk", f"账号安全通知：你的账号已被管理员{action.replace('用户账号', '')}。")
+    notify_admin_risk(db, auth, f"{action}：{user.username}")
+    return {"code": 200, "msg": f"已{action} {user.username}"}
+
+
+@app.post("/api/admin/users/reset-password")
+def admin_reset_password(
+    req: AdminResetPasswordReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin_mfa(auth)
+    user = _user_or_404(db, req.user_id)
+    user.password = hash_password(req.new_password)
+    db.commit()
+    notify_user(db, user, "admin_risk", "账号安全通知：管理员已重置你的登录密码。如非本人申请，请尽快联系客服。")
+    notify_admin_risk(db, auth, f"重置他人密码：{user.username}")
+    return {"code": 200, "msg": f"已重置 {user.username} 的密码"}
+
+
+@app.post("/api/admin/users/quota")
+def admin_set_quota(
+    req: AdminQuotaReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin_mfa(auth)
+    ids = [int(i) for i in req.user_ids if int(i) > 0]
+    if not ids:
+        raise HTTPException(status_code=400, detail="请选择要调整额度的用户")
+    chat_extra = max(0, int(req.chat_extra))
+    image_extra = max(0, int(req.image_extra))
+    rows = db.query(User).filter(User.id.in_(ids)).all()
+    for user in rows:
+        user.quota_chat_extra = chat_extra
+        user.quota_image_extra = image_extra
+    db.commit()
+    notify_admin_risk(
+        db,
+        auth,
+        f"批量修改用户额度：{len(rows)} 人，对话 +{chat_extra}，生图 +{image_extra}",
+    )
+    return {"code": 200, "msg": f"已调整 {len(rows)} 名用户的额外额度"}
+
+
+@app.post("/api/admin/orders/approve")
+def admin_approve_order(
+    req: AdminApproveOrderReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin_mfa(auth)
+    order = db.get(RechargeOrder, req.order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    if order.status == "paid":
+        return {"code": 200, "msg": "订单已是已支付状态"}
+    if order.status != "pending":
+        raise HTTPException(status_code=400, detail="只能审核待支付订单")
+    user = _user_or_404(db, order.user_id)
+    extend_vip(user, order.days)
+    order.status = "paid"
+    order.remark = f"管理员 {auth.username} 审核开通"
+    order.channel = order.channel or "admin"
+    db.commit()
+    notify_vip_opened(db, user, order.package_name, order.days)
+    notify_admin_risk(db, auth, f"审核订单并开通会员：订单 {order.id}，用户 {user.username}")
+    return {"code": 200, "msg": "订单已审核通过并开通会员"}
+
+
+@app.get("/api/admin/sms")
+def admin_sms_logs(
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin_mfa(auth)
+    rows = (
+        db.query(SmsLog)
+        .filter(SmsLog.kind == "notice")
+        .order_by(SmsLog.id.desc())
+        .limit(30)
+        .all()
+    )
+    return {"code": 200, "data": [_sms_row(r) for r in rows]}
 
 
 @app.get("/api/admin/recharges")
@@ -955,7 +1456,7 @@ def admin_recharges(
     db: Session = Depends(get_db),
     auth: User = Depends(get_current_user),
 ):
-    require_admin(auth)
+    require_admin_mfa(auth)
     rows = db.query(RechargeOrder).order_by(RechargeOrder.id.desc()).limit(100).all()
     return {
         "code": 200,
