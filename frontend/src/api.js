@@ -220,15 +220,60 @@ export const api = {
     request(`/api/knowledge/docs/${id}/remove`, { method: "POST", body: "{}" }),
 };
 
+/** 用户端 / 管理端分两套会话，避免两个标签页互相顶号 */
+const USER_SESSION_KEY = "apex_user_session";
+const ADMIN_SESSION_KEY = "apex_admin_session";
+const LEGACY_SESSION_KEY = "apex_user";
+
+function isAdminPortalPath() {
+  if (typeof window === "undefined") return false;
+  return window.location.pathname.startsWith("/admin");
+}
+
+function sessionStorageKey() {
+  return isAdminPortalPath() ? ADMIN_SESSION_KEY : USER_SESSION_KEY;
+}
+
+function readJson(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function getSession() {
-  const raw = localStorage.getItem("apex_user");
-  return raw ? JSON.parse(raw) : null;
+  const key = sessionStorageKey();
+  let data = readJson(key);
+  if (data) return data;
+
+  // 兼容旧版单一 apex_user，按角色拆到对应门户
+  const legacy = readJson(LEGACY_SESSION_KEY);
+  if (!legacy) return null;
+  if (isAdminPortalPath() && legacy.is_admin) {
+    localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(legacy));
+    return legacy;
+  }
+  if (!isAdminPortalPath() && !legacy.is_admin) {
+    localStorage.setItem(USER_SESSION_KEY, JSON.stringify(legacy));
+    return legacy;
+  }
+  return null;
 }
 
 export function setSession(user) {
-  localStorage.setItem("apex_user", JSON.stringify(user));
+  localStorage.setItem(sessionStorageKey(), JSON.stringify(user));
 }
 
 export function clearSession() {
-  localStorage.removeItem("apex_user");
+  localStorage.removeItem(sessionStorageKey());
+  // 顺带清掉旧 key，避免下次又串号
+  if (!isAdminPortalPath()) {
+    const legacy = readJson(LEGACY_SESSION_KEY);
+    if (legacy && !legacy.is_admin) localStorage.removeItem(LEGACY_SESSION_KEY);
+  } else {
+    const legacy = readJson(LEGACY_SESSION_KEY);
+    if (legacy && legacy.is_admin) localStorage.removeItem(LEGACY_SESSION_KEY);
+  }
 }

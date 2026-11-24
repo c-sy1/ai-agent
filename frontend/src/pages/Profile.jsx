@@ -66,7 +66,7 @@ export default function Profile() {
       }
     };
     const onStorage = (e) => {
-      if (e.key === "apex_user") {
+      if (e.key === "apex_user_session" || e.key === "apex_user") {
         const next = getSession();
         if (!next?.user_id) {
           navigate("/login", { replace: true });
