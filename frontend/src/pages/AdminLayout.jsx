@@ -1,6 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { clearSession, getSession } from "../api";
-import AdminMfaGate from "./AdminMfaGate";
 
 export default function AdminLayout() {
   const user = getSession();
@@ -38,9 +37,7 @@ export default function AdminLayout() {
         </div>
       </header>
       <div className="admin-body">
-        <AdminMfaGate>
-          <Outlet />
-        </AdminMfaGate>
+        <Outlet />
       </div>
     </div>
   );

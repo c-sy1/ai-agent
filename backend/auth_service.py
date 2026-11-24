@@ -159,11 +159,5 @@ def require_admin(auth: User) -> None:
 
 
 def require_admin_mfa(auth: User) -> None:
-    """后台高危接口：账号密码登录后，还需处于二次验证有效期内（邮箱/短信）。"""
+    """原为邮箱二次验证；课程演示改为仅校验管理员身份。"""
     require_admin(auth)
-    until = getattr(auth, "admin_mfa_until", None)
-    if until is None or until < datetime.utcnow():
-        raise HTTPException(
-            status_code=403,
-            detail="进入后台需要二次验证（邮箱验证码）",
-        )
