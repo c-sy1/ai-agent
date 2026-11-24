@@ -1140,6 +1140,8 @@ def knowledge_create(
     db: Session = Depends(get_db),
     auth: User = Depends(get_current_user),
 ):
+    """共享知识库仅管理员可写入（普通用户通过对话自动引用）。"""
+    require_admin(auth)
     cat = (req.category or "").strip()
     if cat not in KB_CATEGORIES:
         raise HTTPException(
@@ -1172,11 +1174,10 @@ def knowledge_remove(
     db: Session = Depends(get_db),
     auth: User = Depends(get_current_user),
 ):
+    require_admin(auth)
     row = db.get(KnowledgeDoc, doc_id)
     if row is None:
         raise HTTPException(status_code=404, detail="文档不存在")
-    if int(auth.is_admin or 0) != 1 and row.user_id != auth.id:
-        raise HTTPException(status_code=403, detail="无权删除")
     db.delete(row)
     db.commit()
     return {"code": 200, "msg": "已删除"}

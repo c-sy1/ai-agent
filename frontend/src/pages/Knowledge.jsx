@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { api, getSession } from "../api";
 
 const CATS = ["全部", "使用说明", "业务资料", "常见问题"];
 
@@ -11,6 +11,8 @@ const CAT_TONE = {
 };
 
 export default function Knowledge() {
+  const session = getSession();
+  const isAdmin = Boolean(session?.is_admin);
   const [category, setCategory] = useState("全部");
   const [docs, setDocs] = useState([]);
   const [title, setTitle] = useState("");
@@ -78,8 +80,8 @@ export default function Knowledge() {
           <p className="kb-eyebrow">Knowledge</p>
           <h1>知识库</h1>
           <p className="kb-lead">
-            存放产品说明、业务口径、FAQ 等资料。对话时按关键词自动检索，并在回答末尾标注来源。
-            可先存一篇，再去 <Link to="/chat">对话</Link> 提问验证。
+            这是产品共享知识库：管理员维护资料，所有用户在 <Link to="/chat">对话</Link> 提问时自动引用。
+            普通用户只需浏览；写入/删除仅管理员可用。
           </p>
         </div>
         <div className="kb-stat">
@@ -88,48 +90,54 @@ export default function Knowledge() {
         </div>
       </header>
 
-      <section className="kb-composer">
-        <div className="kb-composer-top">
-          <h2>新增资料</h2>
-          <div className="kb-cat-select">
-            {CATS.filter((c) => c !== "全部").map((c) => (
-              <button
-                key={c}
-                type="button"
-                className={`kb-mini-tab${newCat === c ? " on" : ""}`}
-                onClick={() => setNewCat(c)}
-              >
-                {c}
-              </button>
-            ))}
+      {isAdmin ? (
+        <section className="kb-composer">
+          <div className="kb-composer-top">
+            <h2>新增资料（管理员）</h2>
+            <div className="kb-cat-select">
+              {CATS.filter((c) => c !== "全部").map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`kb-mini-tab${newCat === c ? " on" : ""}`}
+                  onClick={() => setNewCat(c)}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-        <input
-          className="kb-input"
-          placeholder="标题，例如：VIP 套餐说明"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-        <textarea
-          className="kb-textarea"
-          rows={4}
-          placeholder="粘贴正文：使用说明、业务资料、常见问题…"
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-        />
-        <div className="kb-composer-actions">
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={saving || !title.trim() || !content.trim()}
-            onClick={create}
-          >
-            {saving ? "保存中…" : "保存"}
-          </button>
-          {ok && <span className="kb-ok">{ok}</span>}
-          {error && <span className="kb-err">{error}</span>}
-        </div>
-      </section>
+          <input
+            className="kb-input"
+            placeholder="标题，例如：VIP 套餐说明"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+          />
+          <textarea
+            className="kb-textarea"
+            rows={4}
+            placeholder="粘贴正文：使用说明、业务资料、常见问题…"
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+          />
+          <div className="kb-composer-actions">
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={saving || !title.trim() || !content.trim()}
+              onClick={create}
+            >
+              {saving ? "保存中…" : "保存"}
+            </button>
+            {ok && <span className="kb-ok">{ok}</span>}
+            {error && <span className="kb-err">{error}</span>}
+          </div>
+        </section>
+      ) : (
+        <p className="kb-muted" style={{ textAlign: "left", padding: "0 0 16px" }}>
+          你当前是普通用户，可查看资料；维护内容请使用管理员账号（如 xiaoyema）。
+        </p>
+      )}
 
       <div className="kb-filter">
         {CATS.map((c) => (
@@ -167,18 +175,22 @@ export default function Knowledge() {
                 </div>
                 <span className="kb-chevron">{open ? "收起" : "展开"}</span>
               </button>
-              <div className="kb-item-actions">
-                <button type="button" className="kb-del" onClick={() => remove(d.id)}>
-                  删除
-                </button>
-              </div>
+              {isAdmin ? (
+                <div className="kb-item-actions">
+                  <button type="button" className="kb-del" onClick={() => remove(d.id)}>
+                    删除
+                  </button>
+                </div>
+              ) : null}
             </article>
           );
         })}
       </div>
 
       {!loading && docs.length === 0 && (
-        <p className="kb-muted">该分类暂无文档，上方可新增。</p>
+        <p className="kb-muted">
+          {isAdmin ? "该分类暂无文档，上方可新增。" : "该分类暂无文档。"}
+        </p>
       )}
     </div>
   );
