@@ -82,28 +82,38 @@ export default function MapChat() {
         }
         await loadAmapScript(key, cfg.data?.security_js_code);
         if (cancelled || !mapRef.current) return;
-        // 容器需有宽高后再初始化，否则也容易灰底
         const el = mapRef.current;
         if (!el.clientWidth || !el.clientHeight) {
           el.style.minHeight = "420px";
         }
+        // 默认矢量样式在部分 Key 上会 INVALID_USER_KEY 导致灰底；
+        // 改用高德公开栅格路网瓦片，保证录屏能看到真实地图。
+        const raster = new window.AMap.TileLayer({
+          getTileUrl(x, y, z) {
+            const host = (x % 4) + 1;
+            return `https://webrd0${host}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x=${x}&y=${y}&z=${z}`;
+          },
+          zIndex: 1,
+          zooms: [3, 18],
+        });
         const map = new window.AMap.Map(el, {
           zoom: 10,
           center: [115.4648, 38.8739],
           viewMode: "2D",
+          layers: [raster],
         });
         mapInst.current = map;
         map.on("complete", () => {
           map.resize();
           setMapHint("已就绪 · 试试问「白洋淀在哪」");
         });
-        // 监听鉴权失败（控制台常见 INVALID_USER_SCODE / DOMAIN）
         map.on("error", (err) => {
           setMapHint(
             `底图加载失败：${err?.info || err?.type || "鉴权/白名单"}。请检查安全密钥与域名白名单`
           );
         });
         setTimeout(() => map.resize(), 200);
+        window.addEventListener("resize", () => mapInst.current?.resize());
         const list = cfg.data?.places || [];
         list.forEach((p) => {
           const m = new window.AMap.Marker({

@@ -169,7 +169,19 @@
           return;
         }
         await loadAmap(key, cfg.data.security_js_code);
-        map = new AMap.Map("map", { zoom: 10, center: [115.4648, 38.8739] });
+        // 矢量样式易灰屏：改用栅格路网瓦片
+        const raster = new AMap.TileLayer({
+          getTileUrl: function (x, y, z) {
+            return "https://webrd0" + ((x % 4) + 1) + ".is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x=" + x + "&y=" + y + "&z=" + z;
+          },
+          zIndex: 1,
+          zooms: [3, 18],
+        });
+        map = new AMap.Map("map", {
+          zoom: 10,
+          center: [115.4648, 38.8739],
+          layers: [raster],
+        });
         statusEl.textContent = "地图就绪";
         (cfg.data.places || []).forEach((p) => {
           const m = new AMap.Marker({ position: [p.lng, p.lat], title: p.name });
