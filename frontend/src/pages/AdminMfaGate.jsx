@@ -84,11 +84,16 @@ export default function AdminMfaGate({ children }) {
         </p>
         {emailHint ? (
           <p style={{ marginBottom: 12 }}>
-            验证码将发送至：<strong>{emailHint}</strong>
+            账号绑定邮箱：<strong>{emailHint}</strong>
+            {String(emailHint).includes("apex.ai") ? (
+              <span style={{ display: "block", marginTop: 6, color: "#b7791f" }}>
+                这是系统演示邮箱（不是你的私人邮箱），收不到信。点「获取验证码」后，验证码会直接显示在本页。
+              </span>
+            ) : null}
           </p>
         ) : (
           <p className="form-error" style={{ marginBottom: 12 }}>
-            当前管理员账号未绑定邮箱，请先在数据库/账号里补全邮箱后再验证。
+            当前管理员账号未绑定邮箱，请先补全邮箱后再验证。
           </p>
         )}
         <form onSubmit={verify}>
@@ -109,8 +114,8 @@ export default function AdminMfaGate({ children }) {
             </div>
           </div>
           {demoCode ? (
-            <p className="form-ok" style={{ marginBottom: 8 }}>
-              演示模式验证码：{demoCode}
+            <p className="form-ok" style={{ marginBottom: 8, fontSize: 16 }}>
+              演示验证码（填这个）：<strong>{demoCode}</strong>
             </p>
           ) : null}
           {info ? <p className="form-ok" style={{ marginBottom: 8 }}>{info}</p> : null}

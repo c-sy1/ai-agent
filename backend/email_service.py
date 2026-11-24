@@ -146,7 +146,9 @@ def send_email_code(
     db.refresh(row)
 
     demo = (os.getenv("EMAIL_DEMO") or "").strip().lower() in ("1", "true", "yes")
-    if demo or not email_configured():
+    # 种子/演示邮箱收不到真信，直接回显验证码
+    placeholder_mail = email.lower().endswith("@apex.ai")
+    if demo or placeholder_mail or not email_configured():
         return {
             "email": mask_email(email),
             "scene": scene,
@@ -154,6 +156,7 @@ def send_email_code(
             "demo": True,
             "demo_code": code,
             "provider": "demo",
+            "hint": "演示邮箱无法收信，请使用页面上的验证码" if placeholder_mail else "",
         }
 
     try:
