@@ -199,7 +199,7 @@ export default function Login({ portal = "user" }) {
       <div className="login-card card">
         <div className="hero" style={{ marginBottom: 20 }}>
           <div className="hero-logo">🤖</div>
-          <h1>{isAdminPortal ? "Apex AI 管理端" : "Apex AI"}</h1>
+          <h1>{isAdminPortal ? "Apex AI 管理端222" : "Apex AI"}</h1>
           <p>{title}</p>
         </div>
 
