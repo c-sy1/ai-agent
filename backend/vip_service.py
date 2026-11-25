@@ -18,6 +18,13 @@ VIP_FEATURE_LABELS = {
 
 VIP_PACKAGES = [
     {
+        "id": "vip_test",
+        "name": "支付测试（1分钱）",
+        "days": 1,
+        "price": 0.01,
+        "desc": "支付宝最低金额测到账；付成功开 1 天 VIP（无法收 0.0001）",
+    },
+    {
         "id": "vip_month",
         "name": "月度 VIP",
         "days": 30,
