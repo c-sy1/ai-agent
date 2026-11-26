@@ -19,6 +19,13 @@ _PRESETS: dict[str, list[dict]] = {
         {"slot": "下午", "name": "保定军校纪念馆", "tip": "红色/近代军事史，适合研学"},
         {"slot": "傍晚", "name": "竞秀公园", "tip": "休闲散步收尾，可看夜景"},
     ],
+    "北京": [
+        {"slot": "上午", "name": "天安门广场", "tip": "升旗/广场拍照，注意安检与预约"},
+        {"slot": "上午", "name": "故宫博物院", "tip": "建议提前预约门票，参观2～3小时"},
+        {"slot": "中午", "name": "王府井", "tip": "午餐+逛街，可吃北京小吃"},
+        {"slot": "下午", "name": "景山公园", "tip": "登顶俯瞰故宫全景"},
+        {"slot": "傍晚", "name": "南锣鼓巷", "tip": "胡同氛围收尾，适合散步"},
+    ],
     "白洋淀": [
         {"slot": "上午", "name": "白洋淀", "tip": "乘船游淀，观荷听芦"},
         {"slot": "中午", "name": "白洋淀", "tip": "淀区渔家餐（请按景区指示选择正规餐厅）"},
@@ -77,6 +84,42 @@ _SPOT_COORDS: dict[str, dict] = {
         "lat": 39.3525,
         "address": "河北省保定市易县",
     },
+    "天安门广场": {
+        "name": "天安门广场",
+        "lng": 116.397477,
+        "lat": 39.903739,
+        "address": "北京市东城区天安门广场",
+    },
+    "故宫博物院": {
+        "name": "故宫博物院",
+        "lng": 116.397026,
+        "lat": 39.918058,
+        "address": "北京市东城区景山前街4号",
+    },
+    "王府井": {
+        "name": "王府井步行街",
+        "lng": 116.418043,
+        "lat": 39.914885,
+        "address": "北京市东城区王府井大街",
+    },
+    "景山公园": {
+        "name": "景山公园",
+        "lng": 116.396715,
+        "lat": 39.926072,
+        "address": "北京市西城区景山西街44号",
+    },
+    "南锣鼓巷": {
+        "name": "南锣鼓巷",
+        "lng": 116.403119,
+        "lat": 39.937573,
+        "address": "北京市东城区南锣鼓巷",
+    },
+    "北京": {
+        "name": "北京市中心",
+        "lng": 116.397128,
+        "lat": 39.916527,
+        "address": "北京市",
+    },
 }
 
 
@@ -91,13 +134,23 @@ def is_route_question(text: str) -> bool:
     return False
 
 
-def _pick_preset(text: str) -> tuple[str, list[dict]]:
+def _pick_preset(text: str) -> tuple[str, list[dict]] | None:
+    """按用户提到的地名选预设；未识别城市时不默默改成保定。"""
     t = text or ""
     if "狼牙山" in t:
         return "狼牙山", _PRESETS["狼牙山"]
     if "白洋淀" in t:
         return "白洋淀", _PRESETS["白洋淀"]
-    return "保定", _PRESETS["保定"]
+    if "北京" in t:
+        return "北京", _PRESETS["北京"]
+    if "保定" in t:
+        return "保定", _PRESETS["保定"]
+    # 「一日游」但没写城市：默认保定演示
+    if re.search(r"一日游|行程|路线", t) and not re.search(
+        r"北京|上海|天津|石家庄|太原|山西|河北", t
+    ):
+        return "保定", _PRESETS["保定"]
+    return None
 
 
 def _builtin_spot(name: str) -> dict | None:
@@ -160,7 +213,14 @@ def build_day_route(question: str) -> dict:
       answer: 带 [[map:]] 标记的 Markdown 行程
       stops: [{order,name,lng,lat,address,slot,tip}]
     """
-    city, spots = _pick_preset(question)
+    picked = _pick_preset(question)
+    if not picked:
+        supported = "、".join(_PRESETS.keys())
+        raise ValueError(
+            f"暂未内置该城市一日游模板。当前支持：{supported}。"
+            "请换这些目的地试试（高德额度紧张时也能打点）。"
+        )
+    city, spots = picked
     used_amap = False
     used_builtin = False
     lines = [
@@ -215,5 +275,5 @@ def try_build_route(question: str) -> str | None:
     except ValueError as e:
         return (
             f"⚠️ 路线规划部分景点定位失败：{e}\n\n"
-            "请稍后再试，或改问「保定一日游 / 白洋淀一日游 / 狼牙山一日游」（内置路线可离线打点）。"
+            "请改问「北京 / 保定 / 白洋淀 / 狼牙山」一日游（内置路线可打点），或稍后再试高德检索。"
         )
