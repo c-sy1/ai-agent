@@ -38,13 +38,8 @@ export default function Profile() {
     setAlipayReady(ali);
     setWechatReady(wx);
     setPayReady(Boolean(pkg.data?.pay_ready) || ali || wx);
-    setPayChannel((prev) => {
-      if (prev === "alipay" && ali) return "alipay";
-      if (prev === "wechat" && wx) return "wechat";
-      if (ali) return "alipay";
-      if (wx) return "wechat";
-      return prev;
-    });
+    // 未配置微信时默认支付宝，界面也不展示通道切换
+    setPayChannel(wx && !ali ? "wechat" : "alipay");
     setOrders(ord.data || []);
     setSession({
       ...current,
@@ -302,27 +297,33 @@ export default function Profile() {
       ) : null}
 
       <div className="card profile-form" style={{ marginBottom: 16 }}>
-        <h2 className="panel-title">开通 VIP</h2>
+        <h2 className="panel-title">
+          开通 VIP{alipayReady && !wechatReady ? "（支付宝充值）" : ""}
+        </h2>
         <p className="profile-desc" style={{ marginBottom: 12 }}>
           VIP：更高对话/生图额度，解锁 AI 视频与 PPT 下载。支付成功后自动开通。
-          {!loading && payReady && (
+          {!loading && payReady && alipayReady && !wechatReady && (
             <span style={{ color: "#636e72", display: "block", marginTop: 6 }}>
-              已接入
-              {alipayReady ? " 支付宝" : ""}
-              {alipayReady && wechatReady ? " /" : ""}
-              {wechatReady ? " 微信" : ""}
-              。选好支付方式后再点套餐付款。
+              支付宝参数已就绪。若开放平台应用仍在「审核中」，正式收款需等审核通过；此前可用管理端手动开通 VIP。
+            </span>
+          )}
+          {!loading && payReady && wechatReady && (
+            <span style={{ color: "#636e72", display: "block", marginTop: 6 }}>
+              已接入{alipayReady ? " 支付宝" : ""}
+              {alipayReady ? " /" : ""} 微信。选好支付方式后再点套餐付款。
             </span>
           )}
           {!loading && !payReady && (
             <span style={{ color: "#c0392b", display: "block", marginTop: 6 }}>
-              服务器尚未配置可用支付通道。请在
+              服务器未读到完整支付宝参数（APP_ID + 密钥文件）。请确认云主机
               <code> backend/.env </code>
-              配置支付宝和/或微信商户参数并重启；期间可由管理端开通 VIP。
+              与
+              <code> backend/keys/ </code>
+              已配置并已重启服务；期间可由管理端开通 VIP。
             </span>
           )}
         </p>
-        {payReady && (
+        {payReady && wechatReady && (
           <div className="pay-channel" style={{ marginBottom: 14, display: "flex", gap: 16 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <input
@@ -341,10 +342,9 @@ export default function Profile() {
                 name="payChannel"
                 value="wechat"
                 checked={payChannel === "wechat"}
-                disabled={!wechatReady}
                 onChange={() => setPayChannel("wechat")}
               />
-              微信支付{!wechatReady ? "（未配置）" : ""}
+              微信支付
             </label>
           </div>
         )}
@@ -388,7 +388,7 @@ export default function Profile() {
                   ? "创建订单…"
                   : !payReady
                     ? "待配置支付"
-                    : payChannel === "wechat"
+                    : payChannel === "wechat" && wechatReady
                       ? "微信扫码支付"
                       : "去支付宝支付"}
               </button>
