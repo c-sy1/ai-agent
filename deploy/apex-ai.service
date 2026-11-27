@@ -10,8 +10,8 @@ Environment=PATH=/opt/apex-ai/backend/.venv/bin:/usr/bin
 ExecStart=/opt/apex-ai/backend/.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=3
-StandardOutput=append:/tmp/apex-ai.log
-StandardError=append:/tmp/apex-ai.log
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
