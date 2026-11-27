@@ -2,12 +2,26 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, getSession } from "../api";
 
+function shortTradeNo(no) {
+  if (!no) return "-";
+  if (no.length <= 14) return no;
+  return `${no.slice(0, 8)}…${no.slice(-4)}`;
+}
+
+function statusLabel(status) {
+  if (status === "paid") return "已支付";
+  if (status === "pending") return "待支付";
+  if (status === "cancelled") return "已取消";
+  return status || "-";
+}
+
 export default function Admin() {
   const navigate = useNavigate();
   const session = getSession();
   const [users, setUsers] = useState([]);
   const [orders, setOrders] = useState([]);
   const [days, setDays] = useState(30);
+  const [tab, setTab] = useState("users");
   const [error, setError] = useState("");
   const [okMsg, setOkMsg] = useState("");
   const [loading, setLoading] = useState(true);
@@ -53,18 +67,13 @@ export default function Admin() {
 
     if (
       !window.confirm(
-        `请先确认用户是否已经付款\n\n用户：${who}（ID ${userId}）\n当前 VIP：${user.is_vip ? "是" : "否"}\n订单情况：${payHint}\n\n若用户未付款，请点「取消」。\n若已核对支付宝到账或需客服补开，再点「确定」继续。`
+        `请先确认用户是否已经付款\n\n用户：${who}（ID ${userId}）\n当前 VIP：${user.is_vip ? "是" : "否"}\n订单情况：${payHint}\n\n未付款请点「取消」；已核对到账或需补开再点「确定」。`
       )
     ) {
       return;
     }
-    if (
-      !window.confirm(
-        `二次确认：手动给「${who}」开通 ${d} 天 VIP？\n开通后立即生效，与是否点过支付按钮无关。`
-      )
-    ) {
-      return;
-    }
+    if (!window.confirm(`二次确认：给「${who}」开通 ${d} 天 VIP？`)) return;
+
     setOkMsg("");
     setError("");
     try {
@@ -73,7 +82,7 @@ export default function Admin() {
         user_id: userId,
         days: d,
       });
-      setOkMsg(`已给用户 ${userId} 开通 ${d} 天 VIP（管理员手动）`);
+      setOkMsg(`已给 ${who} 开通 ${d} 天 VIP`);
       load();
     } catch (e) {
       setError(e.message);
@@ -90,70 +99,94 @@ export default function Admin() {
         admin_user_id: session.user_id,
         user_id: userId,
       });
-      setOkMsg(`已取消用户 ${userId} 的 VIP`);
+      setOkMsg(`已取消 ${who} 的 VIP`);
       load();
     } catch (e) {
       setError(e.message);
     }
   };
 
+  const vipCount = users.filter((u) => u.is_vip).length;
+  const paidCount = orders.filter((o) => o.status === "paid").length;
+  const pendingCount = orders.filter((o) => o.status === "pending").length;
+
   return (
-    <div className="page-scroll profile-page">
-      <div className="card profile-hero">
+    <div className="admin-vip-page">
+      <div className="admin-vip-toolbar">
         <div>
-          <h1 style={{ margin: "0 0 6px" }}>用户与 VIP</h1>
-          <p className="profile-desc">
-            开通 / 取消 VIP，查看充值订单（仅管理端）。新用户注册默认不是 VIP；列表里「是」来自支付宝付款成功，或你点了下方「开通/续期」。
+          <h1 className="admin-vip-title">用户与 VIP</h1>
+          <p className="admin-vip-sub">
+            用户 {users.length} · VIP {vipCount} · 已支付 {paidCount} · 待支付 {pendingCount}
           </p>
         </div>
+        <label className="admin-days-field">
+          <span>开通天数</span>
+          <input
+            type="number"
+            min={1}
+            value={days}
+            onChange={(e) => setDays(e.target.value)}
+          />
+        </label>
       </div>
 
-      <div className="card profile-form" style={{ marginBottom: 16 }}>
-        <label>开通天数</label>
-        <input
-          type="number"
-          min={1}
-          value={days}
-          onChange={(e) => setDays(e.target.value)}
-          style={{ maxWidth: 120, marginLeft: 8 }}
-        />
-        {error && <div className="form-error">{error}</div>}
-        {okMsg && <div className="form-ok">{okMsg}</div>}
+      {error && <div className="form-error">{error}</div>}
+      {okMsg && <div className="form-ok">{okMsg}</div>}
+
+      <div className="admin-tabs">
+        <button
+          type="button"
+          className={tab === "users" ? "on" : ""}
+          onClick={() => setTab("users")}
+        >
+          用户列表
+        </button>
+        <button
+          type="button"
+          className={tab === "orders" ? "on" : ""}
+          onClick={() => setTab("orders")}
+        >
+          充值订单
+        </button>
       </div>
 
       {loading ? (
-        <p style={{ color: "#636e72" }}>加载中…</p>
-      ) : (
-        <>
-          <div className="card" style={{ marginBottom: 16, overflowX: "auto" }}>
-            <h2 className="panel-title">用户列表</h2>
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>用户名</th>
-                  <th>昵称</th>
-                  <th>VIP</th>
-                  <th>到期</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((u) => (
-                  <tr key={u.user_id}>
-                    <td>{u.user_id}</td>
-                    <td>{u.username}</td>
-                    <td>{u.nickname}</td>
-                    <td>{u.is_vip ? "是" : "否"}</td>
-                    <td>{u.vip_expire_at ? u.vip_expire_at.slice(0, 10) : "-"}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        onClick={() => grant(u)}
-                      >
+        <p className="admin-vip-sub">加载中…</p>
+      ) : tab === "users" ? (
+        <div className="admin-panel">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>用户</th>
+                <th>VIP</th>
+                <th>到期</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.user_id}>
+                  <td>{u.user_id}</td>
+                  <td>
+                    <div className="admin-user-cell">
+                      <strong>{u.username}</strong>
+                      {u.nickname && u.nickname !== u.username ? (
+                        <span>{u.nickname}</span>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td>
+                    <span className={`admin-pill ${u.is_vip ? "vip" : "no"}`}>
+                      {u.is_vip ? "VIP" : "普通"}
+                    </span>
+                  </td>
+                  <td>{u.vip_expire_at ? u.vip_expire_at.slice(0, 10) : "-"}</td>
+                  <td>
+                    <div className="admin-row-actions">
+                      <button type="button" className="btn-primary" onClick={() => grant(u)}>
                         {u.is_vip ? "续期" : "开通"}
-                      </button>{" "}
+                      </button>
                       <button
                         type="button"
                         className="logout-btn"
@@ -162,47 +195,56 @@ export default function Admin() {
                       >
                         取消
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="card" style={{ overflowX: "auto" }}>
-            <h2 className="panel-title">充值订单</h2>
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>单号</th>
-                  <th>商户单号</th>
-                  <th>用户</th>
-                  <th>套餐</th>
-                  <th>金额</th>
-                  <th>状态</th>
-                  <th>渠道</th>
-                  <th>时间</th>
+                    </div>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {orders.map((o) => (
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="admin-panel">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>单号</th>
+                <th>用户</th>
+                <th>套餐</th>
+                <th>金额</th>
+                <th>状态</th>
+                <th>渠道</th>
+                <th>时间</th>
+                <th title="商户单号">商户单号</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="admin-empty">
+                    暂无订单
+                  </td>
+                </tr>
+              ) : (
+                orders.map((o) => (
                   <tr key={o.id}>
                     <td>{o.id}</td>
-                    <td>{o.out_trade_no || "-"}</td>
                     <td>{o.user_id}</td>
                     <td>{o.package_name}</td>
                     <td>¥{o.amount}</td>
                     <td>
-                      {o.status === "paid" ? "已支付" : o.status === "pending" ? "待支付" : o.status}
+                      <span className={`admin-pill status-${o.status}`}>
+                        {statusLabel(o.status)}
+                      </span>
                     </td>
-                    <td>{o.channel || "-"}</td>
-                    <td>{o.created_at ? o.created_at.slice(0, 19).replace("T", " ") : "-"}</td>
+                    <td>{o.channel === "alipay" ? "支付宝" : o.channel || "-"}</td>
+                    <td>{o.created_at ? o.created_at.slice(0, 16).replace("T", " ") : "-"}</td>
+                    <td title={o.out_trade_no || ""}>{shortTradeNo(o.out_trade_no)}</td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
