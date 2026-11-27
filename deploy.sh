@@ -5,9 +5,12 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/opt/apex-ai}"
 cd "$APP_DIR"
 
-echo "[1/4] git pull (GitHub)"
+echo "[1/4] git sync (GitHub)"
 git remote set-url origin https://github.com/c-sy1/ai-agent.git || true
-git pull --ff-only origin master || git pull origin master || git pull
+git fetch origin master
+# 丢弃服务器上对已跟踪文件的本地改动，避免挡住更新（.env / keys 一般在 .gitignore）
+git reset --hard origin/master
+git clean -fd -e backend/.env -e backend/keys -e backend/apex_ai.db -e backend/.venv -e frontend/node_modules
 
 
 echo "[2/4] 构建前端"
