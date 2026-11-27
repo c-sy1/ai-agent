@@ -170,10 +170,43 @@ _SPOT_COORDS: dict[str, dict] = {
     },
 }
 
+# 省名 → 默认按省会做一日游（避免「河南一日游」落到保定）
+_PROVINCE_CITY = {
+    "河南": "郑州",
+    "河北": "石家庄",
+    "山西": "太原",
+    "山东": "济南",
+    "陕西": "西安",
+    "四川": "成都",
+    "浙江": "杭州",
+    "江苏": "南京",
+    "湖北": "武汉",
+    "湖南": "长沙",
+    "广东": "广州",
+    "福建": "福州",
+    "辽宁": "沈阳",
+    "吉林": "长春",
+    "黑龙江": "哈尔滨",
+    "安徽": "合肥",
+    "江西": "南昌",
+    "云南": "昆明",
+    "贵州": "贵阳",
+    "广西": "南宁",
+    "海南": "海口",
+    "甘肃": "兰州",
+    "内蒙古": "呼和浩特",
+    "新疆": "乌鲁木齐",
+    "西藏": "拉萨",
+    "宁夏": "银川",
+    "青海": "西宁",
+}
+
 _CITY_PAT = re.compile(
     r"(北京|天津|上海|重庆|保定|石家庄|太原|西安|成都|杭州|南京|武汉|广州|深圳|"
-    r"苏州|青岛|大连|厦门|长沙|郑州|沈阳|哈尔滨|白洋淀|狼牙山|"
-    r"[\u4e00-\u9fff]{2,8}?(?:市|县|区|州))"
+    r"苏州|青岛|大连|厦门|长沙|郑州|沈阳|哈尔滨|济南|福州|合肥|南昌|昆明|贵阳|"
+    r"南宁|海口|兰州|呼和浩特|乌鲁木齐|拉萨|银川|西宁|白洋淀|狼牙山|"
+    + "|".join(map(re.escape, _PROVINCE_CITY.keys()))
+    + r"|[\u4e00-\u9fff]{2,8}?(?:市|县|区|州))"
 )
 
 
@@ -195,10 +228,15 @@ def _extract_city(text: str) -> str | None:
     for key in ("狼牙山", "白洋淀", "北京", "天津", "保定"):
         if key in t:
             return key
+    for prov, capital in _PROVINCE_CITY.items():
+        if prov in t:
+            return capital
     m = _CITY_PAT.search(t)
     if not m:
         return None
     city = m.group(1)
+    if city in _PROVINCE_CITY:
+        return _PROVINCE_CITY[city]
     city = re.sub(r"(市|县|区|州)$", "", city)
     return city or None
 
@@ -215,7 +253,9 @@ def _pick_preset(text: str) -> tuple[str, list[dict]] | None:
         return "北京", _PRESETS["北京"]
     if "保定" in t:
         return "保定", _PRESETS["保定"]
-    if re.search(r"一日游|行程|路线", t) and not _extract_city(t):
+    # 仅当完全没提任何地名时，才默认保定演示
+    stripped = re.sub(r"(一日游|两日游|行程|路线规划|旅游路线|游玩路线|怎么玩|规划|路线|旅游|景点|[？?。！!\s])+", "", t)
+    if re.search(r"一日游|行程|路线", t) and len(stripped) < 2:
         return "保定", _PRESETS["保定"]
     return None
 
