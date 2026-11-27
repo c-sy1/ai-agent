@@ -150,3 +150,202 @@ git push
 - **现在主流程：GitHub → 自托管 Runner → 自动部署**  
 - 以前用过 **Gitee Go**；Gitee 仓库还可作备份（远程名一般是 `gitee`）  
 - 本机默认 `git push` 推的是 GitHub（`origin`）
+
+---
+
+## 十、如果是一个「新项目」要从零部署（一步一步）
+
+下面按「国内轻量服务器 + GitHub + 自动部署」来写，和本项目同类。
+
+### 第 0 步：准备什么
+
+- 一台云服务器（阿里云轻量 / ECS），有公网 IP  
+- 本机已装 Git、能打开 GitHub  
+- 项目能在本地跑通（前端能 build、后端能启动）
+
+---
+
+### 第 1 步：代码放进 Git，推到 GitHub
+
+在本机项目目录：
+
+```bash
+git init
+git add .
+git commit -m "first commit"
+```
+
+浏览器打开 https://github.com/new  
+- 新建空仓库（不要勾 README）  
+- 复制仓库地址，例如 `https://github.com/你的用户名/项目名.git`
+
+```bash
+git branch -M master
+git remote add origin https://github.com/你的用户名/项目名.git
+git push -u origin master
+```
+
+**在哪看：** GitHub 仓库首页应能看到代码。
+
+---
+
+### 第 2 步：服务器上先「手工部署通」
+
+用阿里云 **远程连接 / Workbench** 登录服务器：
+
+```bash
+# 例：放到 /opt/你的项目
+sudo mkdir -p /opt/你的项目
+sudo chown -R $USER:$USER /opt/你的项目
+cd /opt/你的项目
+git clone https://github.com/你的用户名/项目名.git .
+```
+
+然后按项目需要安装依赖并启动，例如：
+
+```bash
+# 前端
+cd frontend && npm install && npm run build
+
+# 后端（示例）
+cd ../backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+# 配置 .env、密钥等（不要提交到 Git）
+nohup python -m uvicorn main:app --host 0.0.0.0 --port 8000 &
+```
+
+防火墙放行业务端口（如 `8000`、`80`）。
+
+浏览器访问：`http://公网IP:端口`，**先确认手工部署能打开**，再做自动部署。
+
+---
+
+### 第 3 步：写一键部署脚本 `deploy.sh`
+
+在仓库根目录放 `deploy.sh`（内容按你的技术栈改），大意是：
+
+1. `git fetch` + `git reset --hard origin/master`  
+2. 构建前端  
+3. 重启后端  
+
+推到 GitHub：
+
+```bash
+git add deploy.sh
+git commit -m "add deploy.sh"
+git push
+```
+
+在服务器试跑一次：
+
+```bash
+cd /opt/你的项目
+bash deploy.sh
+```
+
+---
+
+### 第 4 步：用 systemd 托管后端（推荐，防挂死）
+
+新建 `deploy/xxx.service`，安装到服务器：
+
+```bash
+sudo cp /opt/你的项目/deploy/xxx.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now xxx
+sudo systemctl status xxx
+```
+
+`deploy.sh` 里用 `sudo systemctl restart xxx` 代替裸 `pkill` + `nohup`。
+
+---
+
+### 第 5 步：装 GitHub 自托管 Runner（国内服务器推荐）
+
+1. 打开：`https://github.com/你的用户名/项目名/settings/actions/runners/new`  
+2. 选 **Linux**、**x64**  
+3. 在服务器执行页面给出的下载 / 解压 / `./config.sh` / `./svc.sh install` / `./svc.sh start`  
+   - Token 用页面上的  
+   - 若 GitHub 下载很慢：可在本机下好安装包再用 `scp` 传到服务器  
+
+4. 在 **Settings → Actions → Runners** 看到状态 **Idle**  
+
+> 说明：国外官方 Runner 用 SSH 打国内机器经常失败，所以 runner 装在服务器本机更稳。
+
+---
+
+### 第 6 步：加 Actions 工作流
+
+仓库里建文件：`.github/workflows/deploy.yml`
+
+```yaml
+name: Deploy
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Pull and restart
+        run: |
+          set -e
+          cd /opt/你的项目
+          chmod +x deploy.sh
+          bash deploy.sh
+```
+
+提交并推送：
+
+```bash
+git add .github/workflows/deploy.yml
+git commit -m "add github actions deploy"
+git push
+```
+
+---
+
+### 第 7 步：验证自动部署
+
+1. 随便改一行说明文字，再：
+
+```bash
+git add .
+git commit -m "test auto deploy"
+git push
+```
+
+2. 打开 **Actions**，看是否绿勾  
+3. 打开网站，确认已更新  
+
+---
+
+### 新项目清单（对照用）
+
+- [ ] GitHub 有仓库且能 push  
+- [ ] 服务器 `git clone` 后手动能访问网站  
+- [ ] 有 `deploy.sh` 且手动执行成功  
+- [ ] systemd（或同类）托管进程，挂了会重启  
+- [ ] 防火墙放行端口  
+- [ ] 自托管 Runner 显示 Idle  
+- [ ] `.github/workflows/deploy.yml` 存在  
+- [ ] push 后 Actions 成功、网站变新  
+
+---
+
+### 新项目「在哪找什么」
+
+| 要找的东西 | 位置 |
+|------------|------|
+| 代码 | GitHub 仓库 |
+| 部署是否成功 | 仓库 → Actions |
+| Runner | Settings → Actions → Runners |
+| 工作流文件 | `.github/workflows/*.yml` |
+| 部署脚本 | 仓库根目录 `deploy.sh` |
+| 服务器代码 | 一般 `/opt/项目名` |
+| 网站 | `http://公网IP:端口` |
