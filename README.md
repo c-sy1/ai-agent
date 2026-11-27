@@ -2,6 +2,8 @@
 
 前后端分离的 Apex AI 演示项目：登录/注册、首页、工具箱、智能体广场、对话记录（数据来自数据库）。
 
+代码仓库：[GitHub](https://github.com/c-sy1/ai-agent)（主仓库）。推送到 `master` 后可由 GitHub Actions SSH 部署到阿里云 ECS（需在仓库 Settings → Secrets 配置 `ECS_HOST` / `ECS_USER` / `ECS_SSH_KEY`）。
+
 ## 快速启动
 
 首次安装：

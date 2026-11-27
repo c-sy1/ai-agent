@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Apex AI 一键部署（服务器执行；也可被 Gitee Go 主机部署调用）
+# Apex AI 一键部署（服务器执行；也可被 GitHub Actions 通过 SSH 调用）
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/apex-ai}"
 cd "$APP_DIR"
 
-echo "[1/4] git pull"
-git pull --ff-only || git pull
+echo "[1/4] git pull (GitHub)"
+git remote set-url origin https://github.com/c-sy1/ai-agent.git || true
+git pull --ff-only origin master || git pull origin master || git pull
+
 
 echo "[2/4] 构建前端"
 cd "$APP_DIR/frontend"

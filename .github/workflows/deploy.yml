@@ -1,0 +1,23 @@
+name: Deploy to Aliyun ECS
+
+on:
+  push:
+    branches: [master, main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/apex-ai
+            git remote set-url origin https://github.com/c-sy1/ai-agent.git
+            chmod +x deploy.sh
+            bash deploy.sh
