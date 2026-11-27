@@ -223,7 +223,8 @@ def is_route_question(text: str) -> bool:
     return False
 
 
-def _extract_city(text: str) -> str | None:
+def _extract_city_fast(text: str) -> str | None:
+    """快速规则匹配（可选加速）；匹配不到再走大模型。"""
     t = (text or "").strip()
     for key in ("狼牙山", "白洋淀", "北京", "天津", "保定"):
         if key in t:
@@ -241,7 +242,53 @@ def _extract_city(text: str) -> str | None:
     return city or None
 
 
+def _llm_extract_destination(question: str) -> str:
+    """任意「xx一日游」：用大模型抽出目的地城市/景区名，不靠白名单。"""
+    cfg = get_chat_llm_config()
+    if not cfg:
+        raise ValueError("未配置对话模型，无法识别目的地。请配置 ZHIPU_API_KEY。")
+    prompt = (
+        "从用户话里提取一日游目的地，只输出一个地名（城市或著名景区），不要解释。\n"
+        "若是省名，输出该省省会城市名。\n"
+        "若完全没有目的地，只输出：保定\n"
+        f"用户：{question}"
+    )
+    with httpx.Client(timeout=httpx.Timeout(20.0, read=40.0)) as client:
+        resp = client.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}"},
+            json={
+                "model": cfg["model"],
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "你只输出地名，不要标点、不要引号、不要句子。",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.1,
+            },
+        )
+        resp.raise_for_status()
+        content = (resp.json()["choices"][0]["message"].get("content") or "").strip()
+    city = re.sub(r"[\s\"'“”‘’。！？!?，,、：:]+", "", content)
+    city = re.sub(r"(市|县|区|州|省)$", "", city)
+    if not city or len(city) > 20:
+        raise ValueError("未能识别目的地，请写成「城市名+一日游」，例如「洛阳一日游」。")
+    if city in _PROVINCE_CITY:
+        return _PROVINCE_CITY[city]
+    return city
+
+
+def _resolve_destination(question: str) -> str:
+    fast = _extract_city_fast(question)
+    if fast:
+        return fast
+    return _llm_extract_destination(question)
+
+
 def _pick_preset(text: str) -> tuple[str, list[dict]] | None:
+    """仅当明确命中内置城市时用预设；其它城市全部走动态识别，绝不偷换成保定。"""
     t = text or ""
     if "狼牙山" in t:
         return "狼牙山", _PRESETS["狼牙山"]
@@ -252,10 +299,6 @@ def _pick_preset(text: str) -> tuple[str, list[dict]] | None:
     if "北京" in t:
         return "北京", _PRESETS["北京"]
     if "保定" in t:
-        return "保定", _PRESETS["保定"]
-    # 仅当完全没提任何地名时，才默认保定演示
-    stripped = re.sub(r"(一日游|两日游|行程|路线规划|旅游路线|游玩路线|怎么玩|规划|路线|旅游|景点|[？?。！!\s])+", "", t)
-    if re.search(r"一日游|行程|路线", t) and len(stripped) < 2:
         return "保定", _PRESETS["保定"]
     return None
 
@@ -448,18 +491,20 @@ def build_day_route(question: str) -> dict:
     返回：
       answer: 带 [[map:]] 标记的 Markdown 行程
       stops: [{order,name,lng,lat,address,slot,tip}]
+
+    策略：
+    - 命中内置城市 → 用预设景点（稳、省高德）
+    - 其它任意城市/省份 → 大模型识别目的地 + 生成景点 + 检索坐标
     """
     picked = _pick_preset(question)
     if picked:
         city, spots = picked
         return _format_route(city, spots, dynamic=False)
 
-    city = _extract_city(question)
-    if not city:
-        raise ValueError(
-            "请说明城市，例如「天津一日游」「上海一日游」。"
-            f"内置稳定路线：{'、'.join(_PRESETS.keys())}。"
-        )
+    city = _resolve_destination(question)
+    # 识别结果若刚好是内置城，仍用预设，保证质量
+    if city in _PRESETS:
+        return _format_route(city, _PRESETS[city], dynamic=False)
 
     spots = _llm_spots_for_city(city)
     return _format_route(city, spots, dynamic=True)
@@ -473,6 +518,6 @@ def try_build_route(question: str) -> str | None:
     except Exception as e:
         return (
             f"⚠️ 路线规划暂时失败：{e}\n\n"
-            f"可先试内置城市：{' / '.join(_PRESETS.keys())}；"
-            "其他城市需对话模型 + 高德检索，额度恢复后再试。"
+            "请写成「地名+一日游」（如洛阳一日游、河南一日游）。"
+            "系统会自动识别目的地并生成行程；高德超限时可稍后再试。"
         )
