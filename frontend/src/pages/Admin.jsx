@@ -37,23 +37,34 @@ export default function Admin() {
     load();
   }, [session?.user_id]);
 
-  const grant = async (userId) => {
+  const grant = async (userId, username) => {
+    const d = Number(days) || 30;
+    const who = username || `用户 ${userId}`;
+    if (
+      !window.confirm(
+        `确认手动给「${who}」开通 ${d} 天 VIP？\n（这与用户是否付款无关，点开通就会立即生效）`
+      )
+    ) {
+      return;
+    }
     setOkMsg("");
     setError("");
     try {
       await api.adminGrantVip({
         admin_user_id: session.user_id,
         user_id: userId,
-        days: Number(days) || 30,
+        days: d,
       });
-      setOkMsg(`已给用户 ${userId} 开通 ${days} 天 VIP`);
+      setOkMsg(`已给用户 ${userId} 开通 ${d} 天 VIP（管理员手动）`);
       load();
     } catch (e) {
       setError(e.message);
     }
   };
 
-  const revoke = async (userId) => {
+  const revoke = async (userId, username) => {
+    const who = username || `用户 ${userId}`;
+    if (!window.confirm(`确认取消「${who}」的 VIP？`)) return;
     setOkMsg("");
     setError("");
     try {
@@ -73,7 +84,9 @@ export default function Admin() {
       <div className="card profile-hero">
         <div>
           <h1 style={{ margin: "0 0 6px" }}>用户与 VIP</h1>
-          <p className="profile-desc">开通 / 取消 VIP，查看充值订单（仅管理端）</p>
+          <p className="profile-desc">
+            开通 / 取消 VIP，查看充值订单（仅管理端）。新用户注册默认不是 VIP；列表里「是」来自支付宝付款成功，或你点了下方「开通/续期」。
+          </p>
         </div>
       </div>
 
@@ -116,10 +129,19 @@ export default function Admin() {
                     <td>{u.is_vip ? "是" : "否"}</td>
                     <td>{u.vip_expire_at ? u.vip_expire_at.slice(0, 10) : "-"}</td>
                     <td>
-                      <button type="button" className="btn-primary" onClick={() => grant(u.user_id)}>
-                        开通
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={() => grant(u.user_id, u.username)}
+                      >
+                        {u.is_vip ? "续期" : "开通"}
                       </button>{" "}
-                      <button type="button" className="logout-btn" onClick={() => revoke(u.user_id)}>
+                      <button
+                        type="button"
+                        className="logout-btn"
+                        disabled={!u.is_vip}
+                        onClick={() => revoke(u.user_id, u.username)}
+                      >
                         取消
                       </button>
                     </td>
