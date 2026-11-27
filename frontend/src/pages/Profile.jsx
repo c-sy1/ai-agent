@@ -8,6 +8,10 @@ export default function Profile() {
   const [profile, setProfile] = useState(null);
   const [packages, setPackages] = useState([]);
   const [payReady, setPayReady] = useState(false);
+  const [alipayReady, setAlipayReady] = useState(false);
+  const [wechatReady, setWechatReady] = useState(false);
+  const [payChannel, setPayChannel] = useState("alipay");
+  const [wechatQr, setWechatQr] = useState("");
   const [orders, setOrders] = useState([]);
   const [nickname, setNickname] = useState("");
   const [email, setEmail] = useState("");
@@ -29,7 +33,18 @@ export default function Profile() {
     setNickname(res.data.nickname || "");
     setEmail(res.data.email || "");
     setPackages(pkg.data?.packages || []);
-    setPayReady(Boolean(pkg.data?.pay_ready));
+    const ali = Boolean(pkg.data?.channels?.alipay ?? pkg.data?.alipay_ready);
+    const wx = Boolean(pkg.data?.channels?.wechat ?? pkg.data?.wechat_ready);
+    setAlipayReady(ali);
+    setWechatReady(wx);
+    setPayReady(Boolean(pkg.data?.pay_ready) || ali || wx);
+    setPayChannel((prev) => {
+      if (prev === "alipay" && ali) return "alipay";
+      if (prev === "wechat" && wx) return "wechat";
+      if (ali) return "alipay";
+      if (wx) return "wechat";
+      return prev;
+    });
     setOrders(ord.data || []);
     setSession({
       ...current,
@@ -111,25 +126,46 @@ export default function Profile() {
     }
   };
 
+  const openPayResult = (data) => {
+    const channel = data?.channel || payChannel;
+    if (channel === "wechat") {
+      const codeUrl = data?.code_url;
+      if (!codeUrl) throw new Error("未返回微信收款码，请检查微信商户配置");
+      setWechatQr(codeUrl);
+      setOkMsg("请用微信扫码支付；付完后刷新本页查看 VIP 状态");
+      return;
+    }
+    const payUrl = data?.pay_url;
+    if (!payUrl) throw new Error("未返回支付链接，请检查支付宝商户配置");
+    setOkMsg("正在跳转支付宝付款…支付成功后自动开通 VIP");
+    window.location.href = payUrl;
+  };
+
   const buy = async (packageId) => {
     const current = getSession();
     if (!current?.user_id) return;
+    if (payChannel === "alipay" && !alipayReady) {
+      setError("支付宝未配置，请改选微信或联系管理员");
+      return;
+    }
+    if (payChannel === "wechat" && !wechatReady) {
+      setError("微信支付未配置，请改选支付宝或联系管理员");
+      return;
+    }
     setPaying(packageId);
     setError("");
     setOkMsg("");
+    setWechatQr("");
     try {
       const res = await api.vipRecharge({
         user_id: current.user_id,
         package_id: packageId,
+        channel: payChannel,
       });
-      const payUrl = res.data?.pay_url;
-      if (!payUrl) {
-        throw new Error("未返回支付链接，请检查支付宝商户配置");
-      }
-      setOkMsg("正在跳转支付宝付款…支付成功后自动开通 VIP");
-      window.location.href = payUrl;
+      openPayResult(res.data);
     } catch (err) {
       setError(err.message);
+    } finally {
       setPaying("");
     }
   };
@@ -153,12 +189,10 @@ export default function Profile() {
     if (!current?.user_id) return;
     setError("");
     setOkMsg("");
+    setWechatQr("");
     try {
       const res = await api.vipContinuePay(orderId, current.user_id);
-      const payUrl = res.data?.pay_url;
-      if (!payUrl) throw new Error("未返回支付链接");
-      setOkMsg("正在跳转支付宝…");
-      window.location.href = payUrl;
+      openPayResult(res.data);
     } catch (err) {
       setError(err.message);
     }
@@ -268,24 +302,76 @@ export default function Profile() {
       ) : null}
 
       <div className="card profile-form" style={{ marginBottom: 16 }}>
-        <h2 className="panel-title">开通 VIP（支付宝充值）</h2>
+        <h2 className="panel-title">开通 VIP</h2>
         <p className="profile-desc" style={{ marginBottom: 12 }}>
           VIP：更高对话/生图额度，解锁 AI 视频与 PPT 下载。支付成功后自动开通。
           {!loading && payReady && (
             <span style={{ color: "#636e72", display: "block", marginTop: 6 }}>
-              支付宝参数已就绪。若开放平台应用仍在「审核中」，正式收款需等审核通过；此前可用管理端手动开通 VIP。
+              已接入
+              {alipayReady ? " 支付宝" : ""}
+              {alipayReady && wechatReady ? " /" : ""}
+              {wechatReady ? " 微信" : ""}
+              。选好支付方式后再点套餐付款。
             </span>
           )}
           {!loading && !payReady && (
             <span style={{ color: "#c0392b", display: "block", marginTop: 6 }}>
-              服务器未读到完整支付宝参数（APP_ID + 密钥文件）。请确认云主机
+              服务器尚未配置可用支付通道。请在
               <code> backend/.env </code>
-              与
-              <code> backend/keys/ </code>
-              已配置并已重启服务；期间可由管理端开通 VIP。
+              配置支付宝和/或微信商户参数并重启；期间可由管理端开通 VIP。
             </span>
           )}
         </p>
+        {payReady && (
+          <div className="pay-channel" style={{ marginBottom: 14, display: "flex", gap: 16 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="radio"
+                name="payChannel"
+                value="alipay"
+                checked={payChannel === "alipay"}
+                disabled={!alipayReady}
+                onChange={() => setPayChannel("alipay")}
+              />
+              支付宝{!alipayReady ? "（未配置）" : ""}
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="radio"
+                name="payChannel"
+                value="wechat"
+                checked={payChannel === "wechat"}
+                disabled={!wechatReady}
+                onChange={() => setPayChannel("wechat")}
+              />
+              微信支付{!wechatReady ? "（未配置）" : ""}
+            </label>
+          </div>
+        )}
+        {wechatQr && (
+          <div className="wechat-qr card" style={{ marginBottom: 16, textAlign: "center" }}>
+            <p className="profile-desc">请使用微信扫一扫完成支付</p>
+            <img
+              alt="微信支付二维码"
+              width={220}
+              height={220}
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(wechatQr)}`}
+            />
+            <div style={{ marginTop: 10 }}>
+              <button type="button" className="btn-primary" onClick={() => refresh()}>
+                我已支付，刷新状态
+              </button>
+              <button
+                type="button"
+                className="logout-btn"
+                style={{ marginLeft: 8 }}
+                onClick={() => setWechatQr("")}
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        )}
         <div className="vip-packages">
           {packages.map((p) => (
             <div key={p.id} className="vip-pack card">
@@ -298,7 +384,13 @@ export default function Profile() {
                 disabled={!!paying || loading || !payReady}
                 onClick={() => buy(p.id)}
               >
-                {paying === p.id ? "创建订单…" : payReady ? "去支付宝支付" : "待配置支付"}
+                {paying === p.id
+                  ? "创建订单…"
+                  : !payReady
+                    ? "待配置支付"
+                    : payChannel === "wechat"
+                      ? "微信扫码支付"
+                      : "去支付宝支付"}
               </button>
             </div>
           ))}
@@ -328,6 +420,13 @@ export default function Profile() {
                       <strong>{o.package_name}</strong>
                       <span className="order-date">
                         {o.created_at ? o.created_at.slice(0, 10) : "-"}
+                        {o.channel === "wechat"
+                          ? " · 微信"
+                          : o.channel === "alipay"
+                            ? " · 支付宝"
+                            : o.channel
+                              ? ` · ${o.channel}`
+                              : ""}
                       </span>
                     </div>
                     <div className="order-meta">

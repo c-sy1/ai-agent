@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
@@ -80,8 +80,12 @@ from seed import seed
 from payment_service import (
     PaymentConfigError,
     alipay_configured,
-    build_page_pay_url,
     verify_alipay_callback,
+)
+from wechat_pay_service import (
+    WechatPaymentConfigError,
+    decrypt_notify_resource,
+    wechat_configured,
 )
 from quota_service import QuotaExceededError, usage_summary
 from vip_service import (
@@ -91,6 +95,7 @@ from vip_service import (
     create_vip_order,
     extend_vip,
     mark_order_paid,
+    rebuild_pay_payload,
     revoke_vip,
     vip_status,
 )
@@ -1230,6 +1235,7 @@ def _admin_or_403(db: Session, admin_user_id: int) -> User:
 class RechargeReq(BaseModel):
     user_id: int
     package_id: str
+    channel: str = "alipay"  # alipay | wechat
     sms_code: str = ""
 
 
@@ -1251,13 +1257,19 @@ class AdminRevokeVipReq(BaseModel):
 
 @app.get("/api/vip/packages")
 def vip_packages():
+    ali = alipay_configured()
+    wx = wechat_configured()
     return {
         "code": 200,
         "data": {
             "packages": VIP_PACKAGES,
             "features": VIP_FEATURE_LABELS,
-            "pay_ready": alipay_configured(),
+            "pay_ready": ali or wx,
             "pay_channel": "alipay",
+            "channels": {
+                "alipay": ali,
+                "wechat": wx,
+            },
         },
     }
 
@@ -1279,19 +1291,22 @@ def vip_recharge(
     db: Session = Depends(get_db),
     auth: User = Depends(get_current_user),
 ):
-    """创建 VIP 订单并返回支付宝支付链接（支付成功后才开通）。"""
+    """创建 VIP 订单并返回支付宝跳转链接或微信扫码 code_url。"""
     assert_self_or_admin(auth, req.user_id)
     user = _user_or_404(db, req.user_id)
-    # 支付鉴权交给支付宝；不再强制邮箱/短信验证码（页面无入口会导致“点不动”）
     try:
-        order, pay_url = create_vip_order(db, user, req.package_id)
-    except PaymentConfigError as e:
+        order, pay = create_vip_order(
+            db, user, req.package_id, channel=req.channel or "alipay"
+        )
+    except (PaymentConfigError, WechatPaymentConfigError) as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    ch = pay.get("channel") or order.channel
+    msg = "请用微信扫码支付" if ch == "wechat" else "请完成支付宝支付"
     return {
         "code": 200,
-        "msg": "订单已创建，请完成支付宝支付",
+        "msg": f"订单已创建，{msg}",
         "data": {
             "order_id": order.id,
             "out_trade_no": order.out_trade_no,
@@ -1299,8 +1314,10 @@ def vip_recharge(
             "amount": order.amount,
             "days": order.days,
             "status": order.status,
-            "pay_url": pay_url,
-            "pay_ready": alipay_configured(),
+            "channel": ch,
+            "pay_url": pay.get("pay_url") or "",
+            "code_url": pay.get("code_url") or "",
+            "pay_ready": alipay_configured() or wechat_configured(),
         },
     }
 
@@ -1358,7 +1375,7 @@ def vip_continue_pay(
     db: Session = Depends(get_db),
     auth: User = Depends(get_current_user),
 ):
-    """待支付订单重新生成支付宝跳转链接。"""
+    """待支付订单重新生成支付参数（支付宝跳转或微信扫码）。"""
     assert_self_or_admin(auth, req.user_id)
     _user_or_404(db, req.user_id)
     order = db.get(RechargeOrder, order_id)
@@ -1369,17 +1386,20 @@ def vip_continue_pay(
     if not order.out_trade_no:
         raise HTTPException(status_code=400, detail="订单缺少支付单号")
     try:
-        pay_url = build_page_pay_url(
-            out_trade_no=order.out_trade_no,
-            subject=f"Apex AI {order.package_name}",
-            total_amount=order.amount,
-        )
-    except PaymentConfigError as e:
+        pay = rebuild_pay_payload(order)
+    except (PaymentConfigError, WechatPaymentConfigError) as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
+    ch = pay.get("channel") or order.channel
+    msg = "请用微信扫码支付" if ch == "wechat" else "请完成支付宝支付"
     return {
         "code": 200,
-        "msg": "请完成支付宝支付",
-        "data": {"pay_url": pay_url, "order_id": order.id},
+        "msg": msg,
+        "data": {
+            "order_id": order.id,
+            "channel": ch,
+            "pay_url": pay.get("pay_url") or "",
+            "code_url": pay.get("code_url") or "",
+        },
     }
 
 
@@ -1395,8 +1415,31 @@ async def alipay_notify(request: Request, db: Session = Depends(get_db)):
             db,
             params.get("out_trade_no", ""),
             trade_no=params.get("trade_no", ""),
+            channel="alipay",
         )
     return PlainTextResponse("success")
+
+
+@app.post("/api/pay/wechat/notify")
+async def wechat_notify(request: Request, db: Session = Depends(get_db)):
+    """微信支付结果通知。"""
+    try:
+        payload = await request.json()
+        resource = payload.get("resource") or {}
+        data = decrypt_notify_resource(resource)
+    except Exception:
+        return JSONResponse(
+            status_code=500,
+            content={"code": "FAIL", "message": "解密失败"},
+        )
+    if data.get("trade_state") == "SUCCESS":
+        mark_order_paid(
+            db,
+            data.get("out_trade_no", ""),
+            trade_no=data.get("transaction_id", ""),
+            channel="wechat",
+        )
+    return JSONResponse(content={"code": "SUCCESS", "message": "成功"})
 
 
 @app.get("/api/pay/alipay/return")

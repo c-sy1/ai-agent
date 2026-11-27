@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from database import RechargeOrder, User
 from payment_service import PaymentConfigError, build_page_pay_url, new_out_trade_no
+from wechat_pay_service import WechatPaymentConfigError, build_native_code_url
 
 VIP_FEATURE_VIDEO = "video"
 VIP_FEATURE_PPT = "pptx"
@@ -107,11 +108,21 @@ def get_package(package_id: str) -> dict | None:
     return None
 
 
-def create_vip_order(db: Session, user: User, package_id: str) -> tuple[RechargeOrder, str]:
-    """创建待支付订单并返回支付宝跳转链接。未配置商户参数会报错。"""
+def create_vip_order(
+    db: Session,
+    user: User,
+    package_id: str,
+    *,
+    channel: str = "alipay",
+) -> tuple[RechargeOrder, dict]:
+    """创建待支付订单并返回支付参数。channel: alipay | wechat。"""
     pkg = get_package(package_id)
     if not pkg:
         raise ValueError("套餐不存在")
+
+    channel = (channel or "alipay").strip().lower()
+    if channel not in ("alipay", "wechat"):
+        raise ValueError("支付方式仅支持 alipay 或 wechat")
 
     out_trade_no = new_out_trade_no(user.id)
     order = RechargeOrder(
@@ -121,7 +132,7 @@ def create_vip_order(db: Session, user: User, package_id: str) -> tuple[Recharge
         amount=pkg["price"],
         days=pkg["days"],
         status="pending",
-        channel="alipay",
+        channel=channel,
         remark="待支付",
         out_trade_no=out_trade_no,
     )
@@ -129,22 +140,57 @@ def create_vip_order(db: Session, user: User, package_id: str) -> tuple[Recharge
     db.commit()
     db.refresh(order)
 
+    subject = f"Apex AI {pkg['name']}"
     try:
-        pay_url = build_page_pay_url(
-            out_trade_no=out_trade_no,
-            subject=f"Apex AI {pkg['name']}",
-            total_amount=pkg["price"],
-        )
-    except PaymentConfigError:
+        if channel == "wechat":
+            code_url = build_native_code_url(
+                out_trade_no=out_trade_no,
+                description=subject,
+                total_amount=pkg["price"],
+            )
+            pay = {"channel": "wechat", "code_url": code_url, "pay_url": ""}
+        else:
+            pay_url = build_page_pay_url(
+                out_trade_no=out_trade_no,
+                subject=subject,
+                total_amount=pkg["price"],
+            )
+            pay = {"channel": "alipay", "pay_url": pay_url, "code_url": ""}
+    except (PaymentConfigError, WechatPaymentConfigError):
         order.status = "closed"
         order.remark = "支付未配置"
         db.commit()
         raise
 
-    return order, pay_url
+    return order, pay
 
 
-def mark_order_paid(db: Session, out_trade_no: str, *, trade_no: str = "") -> RechargeOrder | None:
+def rebuild_pay_payload(order: RechargeOrder) -> dict:
+    """待支付订单重新生成支付参数。"""
+    subject = f"Apex AI {order.package_name}"
+    channel = (order.channel or "alipay").strip().lower()
+    if channel == "wechat":
+        code_url = build_native_code_url(
+            out_trade_no=order.out_trade_no,
+            description=subject,
+            total_amount=order.amount,
+        )
+        return {"channel": "wechat", "code_url": code_url, "pay_url": ""}
+    pay_url = build_page_pay_url(
+        out_trade_no=order.out_trade_no,
+        subject=subject,
+        total_amount=order.amount,
+    )
+    return {"channel": "alipay", "pay_url": pay_url, "code_url": ""}
+
+
+def mark_order_paid(
+    db: Session,
+    out_trade_no: str,
+    *,
+    trade_no: str = "",
+    channel: str = "",
+) -> RechargeOrder | None:
     """支付成功回调：幂等开通 VIP。"""
     order = (
         db.query(RechargeOrder)
@@ -160,10 +206,12 @@ def mark_order_paid(db: Session, out_trade_no: str, *, trade_no: str = "") -> Re
     if user is None:
         return order
 
+    ch = (channel or order.channel or "alipay").strip().lower() or "alipay"
+    label = "微信" if ch == "wechat" else "支付宝"
     extend_vip(user, order.days)
     order.status = "paid"
-    order.remark = f"支付宝已支付 {trade_no}".strip()
-    order.channel = "alipay"
+    order.remark = f"{label}已支付 {trade_no}".strip()
+    order.channel = ch
     db.commit()
     db.refresh(order)
     from sms_service import notify_vip_opened
