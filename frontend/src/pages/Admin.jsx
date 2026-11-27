@@ -37,12 +37,30 @@ export default function Admin() {
     load();
   }, [session?.user_id]);
 
-  const grant = async (userId, username) => {
+  const grant = async (user) => {
+    const userId = user.user_id;
     const d = Number(days) || 30;
-    const who = username || `用户 ${userId}`;
+    const who = user.username || `用户 ${userId}`;
+    const userOrders = (orders || []).filter((o) => o.user_id === userId);
+    const paid = userOrders.filter((o) => o.status === "paid");
+    const pending = userOrders.filter((o) => o.status === "pending");
+    const payHint =
+      paid.length > 0
+        ? `系统内已有 ${paid.length} 笔「已支付」订单`
+        : pending.length > 0
+          ? `系统内没有已支付订单，但有 ${pending.length} 笔「待支付」`
+          : "系统内没有任何充值订单（用户很可能尚未付款）";
+
     if (
       !window.confirm(
-        `确认手动给「${who}」开通 ${d} 天 VIP？\n（这与用户是否付款无关，点开通就会立即生效）`
+        `请先确认用户是否已经付款\n\n用户：${who}（ID ${userId}）\n当前 VIP：${user.is_vip ? "是" : "否"}\n订单情况：${payHint}\n\n若用户未付款，请点「取消」。\n若已核对支付宝到账或需客服补开，再点「确定」继续。`
+      )
+    ) {
+      return;
+    }
+    if (
+      !window.confirm(
+        `二次确认：手动给「${who}」开通 ${d} 天 VIP？\n开通后立即生效，与是否点过支付按钮无关。`
       )
     ) {
       return;
@@ -132,7 +150,7 @@ export default function Admin() {
                       <button
                         type="button"
                         className="btn-primary"
-                        onClick={() => grant(u.user_id, u.username)}
+                        onClick={() => grant(u)}
                       >
                         {u.is_vip ? "续期" : "开通"}
                       </button>{" "}
