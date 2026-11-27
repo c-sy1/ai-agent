@@ -12,8 +12,11 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.ECS_HOST }}
-          username: ${{ secrets.ECS_USER }}
+          username: admin
           key: ${{ secrets.ECS_SSH_KEY }}
+          port: 22
+          timeout: 60s
+          command_timeout: 20m
           script_stop: true
           script: |
             set -e
