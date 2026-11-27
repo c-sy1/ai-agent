@@ -1,8 +1,13 @@
 """行程规划工具：生成一日游建议，并按顺序输出地图打点标记。"""
 from __future__ import annotations
 
+import json
 import re
+import time
 
+import httpx
+
+from llm_config import get_chat_llm_config
 from map_service import PLACE_LIBRARY, amap_realtime
 
 _ROUTE_HINT = re.compile(
@@ -10,7 +15,7 @@ _ROUTE_HINT = re.compile(
     re.I,
 )
 
-# 示例目的地预设（演示用，可继续扩展）
+# 热门目的地预设（内置坐标，不依赖高德也能打点）
 _PRESETS: dict[str, list[dict]] = {
     "保定": [
         {"slot": "上午", "name": "直隶总督署博物馆", "tip": "了解清代直隶政治文化，建议1～1.5小时"},
@@ -26,6 +31,13 @@ _PRESETS: dict[str, list[dict]] = {
         {"slot": "下午", "name": "景山公园", "tip": "登顶俯瞰故宫全景"},
         {"slot": "傍晚", "name": "南锣鼓巷", "tip": "胡同氛围收尾，适合散步"},
     ],
+    "天津": [
+        {"slot": "上午", "name": "天津之眼", "tip": "摩天轮观景，建议先网上购票"},
+        {"slot": "上午", "name": "古文化街", "tip": "逛传统街区、买特产小吃"},
+        {"slot": "中午", "name": "意式风情区", "tip": "午餐+拍照，欧式建筑集中"},
+        {"slot": "下午", "name": "五大道", "tip": "骑行或步行看小洋楼"},
+        {"slot": "傍晚", "name": "海河", "tip": "沿岸散步看夜景收尾"},
+    ],
     "白洋淀": [
         {"slot": "上午", "name": "白洋淀", "tip": "乘船游淀，观荷听芦"},
         {"slot": "中午", "name": "白洋淀", "tip": "淀区渔家餐（请按景区指示选择正规餐厅）"},
@@ -40,7 +52,7 @@ _PRESETS: dict[str, list[dict]] = {
     ],
 }
 
-# 预设景点内置坐标（GCJ-02）：高德超限时一日游仍可打点演示
+# 预设景点内置坐标（GCJ-02）
 _SPOT_COORDS: dict[str, dict] = {
     "直隶总督署博物馆": {
         "name": "保定直隶总督署博物馆",
@@ -120,7 +132,49 @@ _SPOT_COORDS: dict[str, dict] = {
         "lat": 39.916527,
         "address": "北京市",
     },
+    "天津之眼": {
+        "name": "天津之眼摩天轮",
+        "lng": 117.1870,
+        "lat": 39.1548,
+        "address": "天津市红桥区永乐桥",
+    },
+    "古文化街": {
+        "name": "天津古文化街",
+        "lng": 117.1905,
+        "lat": 39.1462,
+        "address": "天津市南开区古文化街",
+    },
+    "意式风情区": {
+        "name": "意大利风情旅游区",
+        "lng": 117.2175,
+        "lat": 39.1368,
+        "address": "天津市河北区自由道",
+    },
+    "五大道": {
+        "name": "五大道风景区",
+        "lng": 117.1998,
+        "lat": 39.1165,
+        "address": "天津市和平区五大道",
+    },
+    "海河": {
+        "name": "海河风光带",
+        "lng": 117.2100,
+        "lat": 39.1300,
+        "address": "天津市海河沿岸",
+    },
+    "天津": {
+        "name": "天津市中心",
+        "lng": 117.200983,
+        "lat": 39.084158,
+        "address": "天津市",
+    },
 }
+
+_CITY_PAT = re.compile(
+    r"(北京|天津|上海|重庆|保定|石家庄|太原|西安|成都|杭州|南京|武汉|广州|深圳|"
+    r"苏州|青岛|大连|厦门|长沙|郑州|沈阳|哈尔滨|白洋淀|狼牙山|"
+    r"[\u4e00-\u9fff]{2,8}?(?:市|县|区|州))"
+)
 
 
 def is_route_question(text: str) -> bool:
@@ -129,32 +183,44 @@ def is_route_question(text: str) -> bool:
         return False
     if _ROUTE_HINT.search(t):
         return True
-    if "规划" in t and any(k in t for k in ("保定", "白洋淀", "狼牙山", "旅游", "景点")):
+    if "规划" in t and any(
+        k in t for k in ("保定", "白洋淀", "狼牙山", "北京", "天津", "旅游", "景点")
+    ):
         return True
     return False
 
 
+def _extract_city(text: str) -> str | None:
+    t = (text or "").strip()
+    for key in ("狼牙山", "白洋淀", "北京", "天津", "保定"):
+        if key in t:
+            return key
+    m = _CITY_PAT.search(t)
+    if not m:
+        return None
+    city = m.group(1)
+    city = re.sub(r"(市|县|区|州)$", "", city)
+    return city or None
+
+
 def _pick_preset(text: str) -> tuple[str, list[dict]] | None:
-    """按用户提到的地名选预设；未识别城市时不默默改成保定。"""
     t = text or ""
     if "狼牙山" in t:
         return "狼牙山", _PRESETS["狼牙山"]
     if "白洋淀" in t:
         return "白洋淀", _PRESETS["白洋淀"]
+    if "天津" in t:
+        return "天津", _PRESETS["天津"]
     if "北京" in t:
         return "北京", _PRESETS["北京"]
     if "保定" in t:
         return "保定", _PRESETS["保定"]
-    # 「一日游」但没写城市：默认保定演示
-    if re.search(r"一日游|行程|路线", t) and not re.search(
-        r"北京|上海|天津|石家庄|太原|山西|河北", t
-    ):
+    if re.search(r"一日游|行程|路线", t) and not _extract_city(t):
         return "保定", _PRESETS["保定"]
     return None
 
 
 def _builtin_spot(name: str) -> dict | None:
-    """先查行程内置坐标，再查地图 PLACE_LIBRARY。"""
     if name in _SPOT_COORDS:
         meta = _SPOT_COORDS[name]
         return {**meta, "source": "builtin_route"}
@@ -180,49 +246,104 @@ def _builtin_spot(name: str) -> dict | None:
     return None
 
 
-def _resolve_spot(name: str, city_hint: str) -> dict:
-    """内置坐标优先；再高德实时检索；最后退回城市中心，保证一日游可演示。"""
+def _resolve_spot(name: str, city_hint: str, *, allow_amap: bool = True) -> dict:
+    """内置优先；可选高德；最后退回城市中心。"""
     builtin = _builtin_spot(name)
     if builtin:
         return builtin
 
-    queries = [name, f"{city_hint}{name}", f"{city_hint}市{name}"]
     last_err = None
-    for q in queries:
-        try:
-            return amap_realtime(q)
-        except ValueError as e:
-            last_err = e
-            continue
+    if allow_amap:
+        queries = [name, f"{city_hint}{name}", f"{city_hint}市{name}"]
+        for q in queries:
+            try:
+                time.sleep(0.35)  # 降低并发，减少个人开发者 QPS 超限
+                return amap_realtime(q)
+            except ValueError as e:
+                last_err = e
+                continue
 
     city_pt = _builtin_spot(city_hint)
+    if not city_pt and allow_amap:
+        try:
+            time.sleep(0.35)
+            city_pt = amap_realtime(city_hint)
+        except ValueError as e:
+            last_err = e
     if city_pt:
         return {
             "name": name,
-            "lng": city_pt["lng"],
-            "lat": city_pt["lat"],
+            "lng": float(city_pt["lng"]),
+            "lat": float(city_pt["lat"]),
             "address": city_pt.get("address") or city_hint,
             "source": "city_fallback",
         }
     raise ValueError(str(last_err) if last_err else f"无法定位：{name}")
 
 
-def build_day_route(question: str) -> dict:
-    """
-    返回：
-      answer: 带 [[map:]] 标记的 Markdown 行程
-      stops: [{order,name,lng,lat,address,slot,tip}]
-    """
-    picked = _pick_preset(question)
-    if not picked:
-        supported = "、".join(_PRESETS.keys())
-        raise ValueError(
-            f"暂未内置该城市一日游模板。当前支持：{supported}。"
-            "请换这些目的地试试（高德额度紧张时也能打点）。"
+def _llm_spots_for_city(city: str) -> list[dict]:
+    """无预设时用大模型生成一日游站点列表。"""
+    cfg = get_chat_llm_config()
+    if not cfg:
+        raise ValueError("未配置对话模型，无法为新城市生成行程。请先配置 ZHIPU_API_KEY。")
+
+    prompt = (
+        f"请为「{city}」规划经典一日游，输出严格 JSON 数组，不要 Markdown。"
+        '每项字段：slot(上午/中午/下午/傍晚), name(景点名), tip(一句话看点)。'
+        "共 4～5 个点，按游览顺序，景点名要真实可检索。"
+    )
+    with httpx.Client(timeout=httpx.Timeout(30.0, read=60.0)) as client:
+        resp = client.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}"},
+            json={
+                "model": cfg["model"],
+                "messages": [
+                    {"role": "system", "content": "你只输出 JSON 数组，不要解释。"},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.4,
+            },
         )
-    city, spots = picked
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"].get("content") or ""
+
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    data = json.loads(text)
+    if not isinstance(data, list) or not data:
+        raise ValueError("模型未返回有效行程列表")
+
+    spots: list[dict] = []
+    for item in data[:5]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        spots.append(
+            {
+                "slot": str(item.get("slot") or "全天").strip() or "全天",
+                "name": name,
+                "tip": str(item.get("tip") or "建议按现场开放时间参观").strip(),
+            }
+        )
+    if len(spots) < 2:
+        raise ValueError("生成的行程景点过少，请换个城市再试")
+    return spots
+
+
+def _format_route(
+    city: str,
+    spots: list[dict],
+    *,
+    dynamic: bool = False,
+) -> dict:
     used_amap = False
     used_builtin = False
+    failed: list[str] = []
     lines = [
         f"已为你规划 **{city}一日游** 路线（行程规划工具）。",
         "",
@@ -231,14 +352,18 @@ def build_day_route(question: str) -> dict:
     ]
     stops: list[dict] = []
     for i, spot in enumerate(spots, start=1):
-        point = _resolve_spot(spot["name"], city)
+        try:
+            point = _resolve_spot(spot["name"], city, allow_amap=True)
+        except ValueError:
+            failed.append(spot["name"])
+            continue
         src = point.get("source") or ""
-        if src.startswith("amap"):
+        if src.startswith("amap") or src == "city_fallback":
             used_amap = True
         else:
             used_builtin = True
         stop = {
-            "order": i,
+            "order": len(stops) + 1,
             "slot": spot["slot"],
             "name": point["name"],
             "lng": point["lng"],
@@ -248,7 +373,8 @@ def build_day_route(question: str) -> dict:
             "source": src,
         }
         stops.append(stop)
-        lines.append(f"### {i}. {spot['slot']} · {stop['name']}")
+        n = stop["order"]
+        lines.append(f"### {n}. {spot['slot']} · {stop['name']}")
         lines.append(f"- 看点：{spot['tip']}")
         lines.append(f"- 地址：{stop['address']}")
         lines.append(f"- 坐标：{stop['lng']}, {stop['lat']}")
@@ -256,15 +382,47 @@ def build_day_route(question: str) -> dict:
         lines.append(f"[[map:{stop['lng']},{stop['lat']},{stop['name']}]]")
         lines.append("")
 
+    if not stops:
+        raise ValueError(
+            "景点定位全部失败（高德可能超限）。"
+            f"可先试内置城市：{'、'.join(_PRESETS.keys())}。"
+        )
+
     lines.append("---")
+    if dynamic:
+        lines.append("说明：该城市无固定模板，行程由 AI 生成，坐标尽量实时检索。")
     if used_builtin and not used_amap:
-        lines.append("说明：当前景点坐标来自内置资料（高德额度紧张时仍可完整演示一日游打点）。")
+        lines.append("说明：当前景点坐标来自内置资料（高德额度紧张时仍可完整演示）。")
     elif used_builtin and used_amap:
         lines.append("说明：部分景点为高德实时检索，部分为内置坐标。")
-    lines.append("提示：门票/船班以当天景区公告为准；红色场馆请遵守参观秩序。")
-    lines.append("可继续追问某一站详情，或说「换成美食向路线」。")
+    if failed:
+        lines.append(f"说明：以下景点暂未能定位，已跳过：{'、'.join(failed)}。")
+    lines.append("提示：门票/开放时间以当天景区公告为准。")
+    lines.append("可继续追问某一站详情，或换其他城市再规划。")
 
     return {"answer": "\n".join(lines), "stops": stops, "city": city}
+
+
+def build_day_route(question: str) -> dict:
+    """
+    返回：
+      answer: 带 [[map:]] 标记的 Markdown 行程
+      stops: [{order,name,lng,lat,address,slot,tip}]
+    """
+    picked = _pick_preset(question)
+    if picked:
+        city, spots = picked
+        return _format_route(city, spots, dynamic=False)
+
+    city = _extract_city(question)
+    if not city:
+        raise ValueError(
+            "请说明城市，例如「天津一日游」「上海一日游」。"
+            f"内置稳定路线：{'、'.join(_PRESETS.keys())}。"
+        )
+
+    spots = _llm_spots_for_city(city)
+    return _format_route(city, spots, dynamic=True)
 
 
 def try_build_route(question: str) -> str | None:
@@ -272,8 +430,9 @@ def try_build_route(question: str) -> str | None:
         return None
     try:
         return build_day_route(question)["answer"]
-    except ValueError as e:
+    except Exception as e:
         return (
-            f"⚠️ 路线规划部分景点定位失败：{e}\n\n"
-            "请改问「北京 / 保定 / 白洋淀 / 狼牙山」一日游（内置路线可打点），或稍后再试高德检索。"
+            f"⚠️ 路线规划暂时失败：{e}\n\n"
+            f"可先试内置城市：{' / '.join(_PRESETS.keys())}；"
+            "其他城市需对话模型 + 高德检索，额度恢复后再试。"
         )
