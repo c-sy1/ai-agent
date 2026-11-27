@@ -1,26 +1,19 @@
 name: Deploy to Aliyun ECS
 
+# 在轻量服务器本机跑（self-hosted），避免 GitHub 国外 IP 被拦 SSH
 on:
   push:
     branches: [master, main]
+  workflow_dispatch:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.ECS_HOST }}
-          username: admin
-          key: ${{ secrets.ECS_SSH_KEY }}
-          port: 22
-          timeout: 60s
-          command_timeout: 20m
-          script_stop: true
-          script: |
-            set -e
-            cd /opt/apex-ai
-            git remote set-url origin https://github.com/c-sy1/ai-agent.git
-            chmod +x deploy.sh
-            bash deploy.sh
+      - name: Pull and restart
+        run: |
+          set -e
+          cd /opt/apex-ai
+          git remote set-url origin https://github.com/c-sy1/ai-agent.git
+          chmod +x deploy.sh
+          bash deploy.sh
