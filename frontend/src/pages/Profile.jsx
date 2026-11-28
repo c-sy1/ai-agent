@@ -11,11 +11,15 @@ const FAQ_ITEMS = [
   },
   {
     q: "可以退款吗？",
-    a: "虚拟会员服务开通后原则上不支持无理由退款。若重复扣款或支付异常，请保留订单号联系管理员核对。",
+    a: "虚拟会员服务开通后原则上不支持无理由退款。若重复扣款或支付异常，请保留订单号，通过下方「联系客服」提交工单核对。",
   },
   {
     q: "优惠券怎么用？从哪获得？",
-    a: "注册自动获赠新人券 APEX5；活动券 APEX10 可在个人中心领取一次。领取后 7 天内有效，每人每张限用 1 次。点选可用券后再支付即可抵扣；待支付订单会暂时占用优惠券，取消订单后自动退回。",
+    a: "注册自动获赠新人券 APEX5；活动券 APEX10 可在个人中心领取一次。遇到故障可联系客服，处理后可能获赠补偿券。点选可用券后再支付即可抵扣。",
+  },
+  {
+    q: "出问题怎么找客服？",
+    a: "在个人中心「联系客服」提交工单，说明问题与订单号。客服回复后可在此查看进度；确认属实后可能赠送补偿优惠券。",
   },
   {
     q: "VIP 到期后会怎样？",
@@ -97,15 +101,25 @@ export default function Profile() {
   const [orderQ, setOrderQ] = useState("");
   const [orderPage, setOrderPage] = useState(1);
   const [orderDetail, setOrderDetail] = useState(null);
+  const [supportCats, setSupportCats] = useState([]);
+  const [tickets, setTickets] = useState([]);
+  const [supportForm, setSupportForm] = useState({
+    category: "pay",
+    title: "",
+    content: "",
+  });
+  const [supportSending, setSupportSending] = useState(false);
 
   const refresh = async () => {
     const current = getSession();
     if (!current?.user_id) return;
-    const [res, pkg, ord, couponBag] = await Promise.all([
+    const [res, pkg, ord, couponBag, cats, mineTickets] = await Promise.all([
       api.profile(current.user_id),
       api.vipPackages(),
       api.vipOrders(current.user_id),
       api.vipCouponsMine().catch(() => ({ data: { mine: [], campaign: [], rules: "" } })),
+      api.supportCategories().catch(() => ({ data: [] })),
+      api.supportMine().catch(() => ({ data: [] })),
     ]);
     setProfile(res.data);
     setNickname(res.data.nickname || "");
@@ -115,6 +129,8 @@ export default function Profile() {
     setMyCoupons(couponBag.data?.mine || []);
     setCouponRules(couponBag.data?.rules || pkg.data?.coupon_rules || "");
     setRefundNote(pkg.data?.refund_note || "");
+    setSupportCats(cats.data || []);
+    setTickets(mineTickets.data || []);
     const ali = Boolean(pkg.data?.channels?.alipay ?? pkg.data?.alipay_ready);
     const wx = Boolean(pkg.data?.channels?.wechat ?? pkg.data?.wechat_ready);
     setAlipayReady(ali);
@@ -414,6 +430,56 @@ export default function Profile() {
     } finally {
       setClaiming("");
     }
+  };
+
+  const submitSupport = async (e) => {
+    e.preventDefault();
+    setSupportSending(true);
+    setError("");
+    try {
+      const res = await api.supportCreate(supportForm);
+      setOkMsg(res.msg || "工单已提交");
+      setSupportForm({ category: supportForm.category || "pay", title: "", content: "" });
+      const mine = await api.supportMine();
+      setTickets(mine.data || []);
+    } catch (err) {
+      setPayToast({ type: "err", title: "提交失败", message: err.message || "提交失败" });
+    } finally {
+      setSupportSending(false);
+    }
+  };
+
+  const ticketStatusLabel = (s) => {
+    if (s === "pending") return "待处理";
+    if (s === "processing") return "处理中";
+    if (s === "resolved") return "已解决";
+    if (s === "closed") return "已关闭";
+    return s || "—";
+  };
+
+  const submitSupport = async (e) => {
+    e.preventDefault();
+    setSupportSending(true);
+    setError("");
+    try {
+      const res = await api.supportCreate(supportForm);
+      setOkMsg(res.msg || "工单已提交");
+      setSupportForm({ category: supportForm.category || "pay", title: "", content: "" });
+      const mine = await api.supportMine();
+      setTickets(mine.data || []);
+    } catch (err) {
+      setPayToast({ type: "err", title: "提交失败", message: err.message || "提交失败" });
+    } finally {
+      setSupportSending(false);
+    }
+  };
+
+  const ticketStatusLabel = (s) => {
+    if (s === "pending") return "待处理";
+    if (s === "processing") return "处理中";
+    if (s === "resolved") return "已解决";
+    if (s === "closed") return "已关闭";
+    return s || "—";
   };
 
   if (loading) {
@@ -874,6 +940,90 @@ export default function Profile() {
               ) : null}
             </>
           )}
+        </div>
+
+        <div className="card support-box" id="support" style={{ marginTop: 16 }}>
+          <h3 className="panel-title">联系客服</h3>
+          <p className="profile-desc">
+            支付异常、权益问题或功能故障可在此提交工单。客服处理后会回复，必要时赠送补偿优惠券。
+          </p>
+          <form className="support-form" onSubmit={submitSupport}>
+            <div className="form-field">
+              <label>问题类型</label>
+              <select
+                value={supportForm.category}
+                onChange={(e) => setSupportForm((f) => ({ ...f, category: e.target.value }))}
+              >
+                {(supportCats.length
+                  ? supportCats
+                  : [
+                      { value: "pay", label: "支付/订单异常" },
+                      { value: "vip", label: "VIP/权益问题" },
+                      { value: "bug", label: "功能故障" },
+                      { value: "account", label: "账号安全" },
+                      { value: "other", label: "其他" },
+                    ]
+                ).map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-field">
+              <label>标题（可选）</label>
+              <input
+                value={supportForm.title}
+                onChange={(e) => setSupportForm((f) => ({ ...f, title: e.target.value }))}
+                placeholder="例如：重复扣款 / 支付成功未开通"
+              />
+            </div>
+            <div className="form-field">
+              <label>问题描述</label>
+              <textarea
+                rows={4}
+                required
+                value={supportForm.content}
+                onChange={(e) => setSupportForm((f) => ({ ...f, content: e.target.value }))}
+                placeholder="请说明现象、发生时间，如有订单号请一并写上"
+              />
+            </div>
+            <button type="submit" className="btn-primary" disabled={supportSending}>
+              {supportSending ? "提交中…" : "提交工单"}
+            </button>
+          </form>
+
+          <div className="ticket-list">
+            <h4>我的工单</h4>
+            {tickets.length === 0 ? (
+              <p className="profile-desc">暂无工单</p>
+            ) : (
+              tickets.map((t) => (
+                <div key={t.id} className="ticket-card">
+                  <div className="ticket-head">
+                    <strong>
+                      #{t.id} {t.title}
+                    </strong>
+                    <span className={`order-status status-${t.status === "resolved" ? "paid" : t.status === "pending" ? "pending" : "cancelled"}`}>
+                      {ticketStatusLabel(t.status)}
+                    </span>
+                  </div>
+                  <p className="ticket-content">{t.content}</p>
+                  {t.admin_reply ? (
+                    <div className="ticket-reply">
+                      <em>客服回复</em>
+                      <p>{t.admin_reply}</p>
+                      {t.granted_coupon_code ? (
+                        <p className="form-ok">已赠券：{t.granted_coupon_code}</p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="profile-desc">等待客服处理…</p>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
         <div className="profile-faq">

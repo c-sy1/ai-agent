@@ -232,6 +232,20 @@ export const api = {
       body: JSON.stringify(body),
     }),
   adminFeedbackContext: (id) => request(`/api/admin/feedback/${id}/context`),
+  supportCategories: () => request("/api/support/categories"),
+  supportCreate: (body) =>
+    request("/api/support/tickets", { method: "POST", body: JSON.stringify(body) }),
+  supportMine: () => request("/api/support/tickets/mine"),
+  adminSupportTickets: (status = "") =>
+    request(`/api/admin/support/tickets${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+  adminSupportUpdate: (id, body) =>
+    request(`/api/admin/support/tickets/${id}/update`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  adminCouponTemplates: () => request("/api/admin/coupons/templates"),
+  adminGrantCoupon: (body) =>
+    request("/api/admin/coupons/grant", { method: "POST", body: JSON.stringify(body) }),
   knowledgeCategories: () => request("/api/knowledge/categories"),
   knowledgeDocs: (category) =>
     request(`/api/knowledge/docs${category ? `?category=${encodeURIComponent(category)}` : ""}`),

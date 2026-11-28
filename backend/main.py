@@ -37,8 +37,10 @@ from map_service import (
 from media_service import GENERATED_ROOT, MediaError
 from coupon_service import (
     claim_coupon,
+    grant_support_coupon,
     grant_welcome_coupon,
     list_campaign_coupons,
+    list_grantable_coupons,
     list_user_coupons,
 )
 from database import (
@@ -51,6 +53,7 @@ from database import (
     KnowledgeDoc,
     RechargeOrder,
     SmsLog,
+    SupportTicket,
     Tool,
     User,
     UserCoupon,
@@ -1423,8 +1426,8 @@ def vip_packages():
                 "alipay": ali,
                 "wechat": wx,
             },
-            "refund_note": "虚拟会员服务开通后不支持无理由退款；支付异常请联系管理员核对订单。",
-            "coupon_rules": "新人注册自动获赠 APEX5（7 天有效、限用 1 次）；APEX10 可在个人中心领取一次。",
+            "refund_note": "虚拟会员服务开通后不支持无理由退款；支付异常请在个人中心「联系客服」提交工单。",
+            "coupon_rules": "新人注册自动获赠 APEX5；APEX10 可在个人中心领取一次；客服补偿券由工单处理后赠送。",
         },
     }
 
@@ -1443,7 +1446,7 @@ def vip_coupons_mine(
         "data": {
             "mine": list_user_coupons(db, auth),
             "campaign": list_campaign_coupons(),
-            "rules": "注册送 APEX5；活动券 APEX10 可领 1 次；领取后 7 天内有效，每人每券限用 1 次。",
+            "rules": "注册送 APEX5；活动券 APEX10 可领 1 次；客服可另赠补偿券。券有有效期，每人每张限用 1 次。",
         },
     }
 
@@ -1460,9 +1463,241 @@ def vip_coupons_claim(
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {
         "code": 200,
-        "msg": f"已领取 {row.coupon_code}，请在 7 天内使用",
+        "msg": f"已领取 {row.coupon_code}，请在有效期内使用",
         "data": list_user_coupons(db, auth),
     }
+
+
+SUPPORT_CATEGORIES = {
+    "pay": "支付/订单异常",
+    "vip": "VIP/权益问题",
+    "bug": "功能故障",
+    "account": "账号安全",
+    "other": "其他",
+}
+
+
+class SupportCreateReq(BaseModel):
+    category: str = "other"
+    title: str = ""
+    content: str
+
+
+class SupportAdminUpdateReq(BaseModel):
+    status: str | None = None
+    admin_reply: str | None = None
+    grant_coupon: str | None = None  # COMP5 / COMP10 / COMP20
+
+
+class AdminGrantCouponReq(BaseModel):
+    user_id: int
+    template: str = "COMP10"
+    note: str = ""
+    ticket_id: int | None = None
+
+
+def _ticket_dict(db: Session, t: SupportTicket) -> dict:
+    user = db.get(User, t.user_id)
+    return {
+        "id": t.id,
+        "user_id": t.user_id,
+        "username": user.username if user else "",
+        "nickname": (user.nickname if user else "") or "",
+        "category": t.category,
+        "category_label": SUPPORT_CATEGORIES.get(t.category, t.category),
+        "title": t.title or "",
+        "content": t.content or "",
+        "status": t.status,
+        "admin_reply": t.admin_reply or "",
+        "granted_coupon_code": t.granted_coupon_code or "",
+        "admin_user_id": t.admin_user_id,
+        "created_at": t.created_at.isoformat() if t.created_at else "",
+        "updated_at": t.updated_at.isoformat() if t.updated_at else "",
+    }
+
+
+@app.get("/api/support/categories")
+def support_categories():
+    return {
+        "code": 200,
+        "data": [{"value": k, "label": v} for k, v in SUPPORT_CATEGORIES.items()],
+    }
+
+
+@app.post("/api/support/tickets")
+def support_create(
+    req: SupportCreateReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    cat = (req.category or "other").strip().lower()
+    if cat not in SUPPORT_CATEGORIES:
+        raise HTTPException(status_code=400, detail="问题类型无效")
+    content = (req.content or "").strip()
+    if len(content) < 5:
+        raise HTTPException(status_code=400, detail="请至少说明 5 个字的问题详情")
+    title = (req.title or "").strip()[:120]
+    if not title:
+        title = content[:40]
+    open_n = (
+        db.query(SupportTicket)
+        .filter(
+            SupportTicket.user_id == auth.id,
+            SupportTicket.status.in_(("pending", "processing")),
+        )
+        .count()
+    )
+    if open_n >= 5:
+        raise HTTPException(status_code=400, detail="未结工单过多，请等待客服处理后再提交")
+    row = SupportTicket(
+        user_id=auth.id,
+        category=cat,
+        title=title,
+        content=content[:2000],
+        status="pending",
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"code": 200, "msg": "已提交，客服将尽快回复", "data": _ticket_dict(db, row)}
+
+
+@app.get("/api/support/tickets/mine")
+def support_my_tickets(
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    rows = (
+        db.query(SupportTicket)
+        .filter(SupportTicket.user_id == auth.id)
+        .order_by(SupportTicket.id.desc())
+        .limit(50)
+        .all()
+    )
+    return {"code": 200, "data": [_ticket_dict(db, r) for r in rows]}
+
+
+@app.get("/api/admin/support/tickets")
+def admin_support_list(
+    status: str = "",
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin(auth)
+    q = db.query(SupportTicket)
+    st = (status or "").strip().lower()
+    if st in ("pending", "processing", "resolved", "closed"):
+        q = q.filter(SupportTicket.status == st)
+    rows = q.order_by(SupportTicket.id.desc()).limit(300).all()
+    return {
+        "code": 200,
+        "data": {
+            "tickets": [_ticket_dict(db, r) for r in rows],
+            "grantable_coupons": list_grantable_coupons(),
+            "categories": SUPPORT_CATEGORIES,
+        },
+    }
+
+
+@app.post("/api/admin/support/tickets/{ticket_id}/update")
+def admin_support_update(
+    ticket_id: int,
+    req: SupportAdminUpdateReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin_mfa(auth)
+    row = db.get(SupportTicket, ticket_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="工单不存在")
+    user = _user_or_404(db, row.user_id)
+    if req.admin_reply is not None:
+        row.admin_reply = (req.admin_reply or "").strip()[:2000]
+    if req.status is not None:
+        st = (req.status or "").strip().lower()
+        if st not in ("pending", "processing", "resolved", "closed"):
+            raise HTTPException(status_code=400, detail="状态无效")
+        row.status = st
+    granted = ""
+    if (req.grant_coupon or "").strip():
+        try:
+            coupon = grant_support_coupon(
+                db,
+                user,
+                req.grant_coupon.strip(),
+                ticket_id=row.id,
+                note=f"工单#{row.id}补偿",
+                commit=False,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        granted = coupon.coupon_code
+        row.granted_coupon_code = granted
+        if not row.status or row.status in ("pending", "processing"):
+            row.status = "resolved"
+        if not (row.admin_reply or "").strip():
+            row.admin_reply = f"已为您赠送补偿优惠券 {granted}，请在个人中心优惠券中查看使用。"
+        _write_admin_log(
+            db,
+            auth,
+            action="grant_coupon",
+            target=user,
+            detail=f"工单#{row.id} 赠券 {granted}",
+        )
+        notify_user(
+            db,
+            user,
+            "support_coupon",
+            f"客服已处理你的工单#{row.id}，并赠送优惠券 {granted}。",
+        )
+    row.admin_user_id = auth.id
+    db.commit()
+    db.refresh(row)
+    msg = "已更新工单"
+    if granted:
+        msg = f"已回复并赠送优惠券 {granted}"
+    return {"code": 200, "msg": msg, "data": _ticket_dict(db, row)}
+
+
+@app.post("/api/admin/coupons/grant")
+def admin_coupons_grant(
+    req: AdminGrantCouponReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    """管理员直接给用户赠送补偿券（可不经工单）。"""
+    require_admin_mfa(auth)
+    user = _user_or_404(db, req.user_id)
+    try:
+        row = grant_support_coupon(
+            db,
+            user,
+            req.template,
+            ticket_id=req.ticket_id,
+            note=(req.note or "管理员赠送")[:200],
+            commit=True,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    _write_admin_log(
+        db,
+        auth,
+        action="grant_coupon",
+        target=user,
+        detail=f"直接赠券 {row.coupon_code}",
+    )
+    notify_user(db, user, "support_coupon", f"管理员为你赠送了优惠券 {row.coupon_code}，请在个人中心查看。")
+    return {
+        "code": 200,
+        "msg": f"已赠送 {row.coupon_code}",
+        "data": {"coupon": list_user_coupons(db, user)[0], "code": row.coupon_code},
+    }
+
+
+@app.get("/api/admin/coupons/templates")
+def admin_coupon_templates(auth: User = Depends(get_current_user)):
+    require_admin(auth)
+    return {"code": 200, "data": list_grantable_coupons()}
 
 
 @app.get("/api/vip/status")

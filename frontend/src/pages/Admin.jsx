@@ -750,6 +750,38 @@ export default function Admin() {
                   <span className={`admin-pill ${drawerData?.user?.is_vip ? "vip" : "no"}`}>
                     {drawerData?.user?.is_vip ? "VIP" : "普通"}
                   </span>
+                  <button
+                    type="button"
+                    className="admin-btn admin-btn-ghost"
+                    disabled={busy}
+                    onClick={() => {
+                      setConfirm({
+                        title: "赠送补偿券",
+                        message: `确认给用户 ${drawerUser.username} 赠送 COMP10（满 9.9 减 10）？\n也可到「客服工单」处理工单时赠券。`,
+                        confirmText: "确认赠券",
+                        onConfirm: async () => {
+                          setBusy(true);
+                          try {
+                            const res = await api.adminGrantCoupon({
+                              user_id: drawerUser.user_id,
+                              template: "COMP10",
+                              note: "管理员直接赠送",
+                            });
+                            setOkMsg(res.msg || "已赠券");
+                            setConfirm(null);
+                            openDrawer(drawerUser);
+                          } catch (e) {
+                            setError(e.message || "赠券失败");
+                            setConfirm(null);
+                          } finally {
+                            setBusy(false);
+                          }
+                        },
+                      });
+                    }}
+                  >
+                    赠送补偿券
+                  </button>
                   {(() => {
                     const expire = expireMeta(
                       drawerData?.user?.vip_expire_at,

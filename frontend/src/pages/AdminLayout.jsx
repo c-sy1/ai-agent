@@ -22,6 +22,9 @@ export default function AdminLayout() {
           <NavLink to="/admin/feedback" className={({ isActive }) => (isActive ? "on" : "")}>
             对话反馈
           </NavLink>
+          <NavLink to="/admin/support" className={({ isActive }) => (isActive ? "on" : "")}>
+            客服工单
+          </NavLink>
           <NavLink to="/admin/knowledge" className={({ isActive }) => (isActive ? "on" : "")}>
             知识库维护
           </NavLink>

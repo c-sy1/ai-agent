@@ -146,12 +146,40 @@ class UserCoupon(Base):
         index=True,
     )
     coupon_code = Column(String(40), nullable=False, index=True)
-    source = Column(String(40), nullable=False, default="")  # welcome|claim|grant
+    source = Column(String(40), nullable=False, default="")  # welcome|claim|grant|support
+    # 客服赠券等可覆盖模板面额（空则读 COUPON_DEFS）
+    label = Column(String(80), nullable=False, default="")
+    off_amount = Column(Float, nullable=True)
+    min_amount = Column(Float, nullable=True)
+    note = Column(String(200), nullable=False, default="")
     claimed_at = Column(DateTime, nullable=False, server_default=func.now())
     expire_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)
     order_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class SupportTicket(Base):
+    """用户联系客服工单。"""
+
+    __tablename__ = "support_tickets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    category = Column(String(40), nullable=False, default="other")  # pay|vip|bug|account|other
+    title = Column(String(120), nullable=False, default="")
+    content = Column(Text, nullable=False, default="")
+    status = Column(String(20), nullable=False, default="pending")  # pending|processing|resolved|closed
+    admin_reply = Column(Text, nullable=False, default="")
+    granted_coupon_code = Column(String(40), nullable=False, default="")
+    admin_user_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
 
 class AdminOpLog(Base):
@@ -371,6 +399,16 @@ def _migrate_tool_columns():
                         "ALTER TABLE chat_feedbacks ADD COLUMN issue_tag VARCHAR(40) NOT NULL DEFAULT ''"
                     )
                 )
+        if "user_coupons" in tables:
+            cnames = {c["name"] for c in insp.get_columns("user_coupons")}
+            if "label" not in cnames:
+                conn.execute(text("ALTER TABLE user_coupons ADD COLUMN label VARCHAR(80) NOT NULL DEFAULT ''"))
+            if "off_amount" not in cnames:
+                conn.execute(text("ALTER TABLE user_coupons ADD COLUMN off_amount FLOAT"))
+            if "min_amount" not in cnames:
+                conn.execute(text("ALTER TABLE user_coupons ADD COLUMN min_amount FLOAT"))
+            if "note" not in cnames:
+                conn.execute(text("ALTER TABLE user_coupons ADD COLUMN note VARCHAR(200) NOT NULL DEFAULT ''"))
 
 
 def init_db():

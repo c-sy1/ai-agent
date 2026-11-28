@@ -1,4 +1,4 @@
-"""用户优惠券：注册赠送、领取活动券、7 天有效、每人每券限用一次。"""
+"""用户优惠券：注册赠送、领取活动券、客服赠券、7 天有效。"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from database import User, UserCoupon
 
-# 券模板：valid_days=领取后有效天数；once=每人只能持有/领取一次
+# 券模板：valid_days=领取后有效天数
 COUPON_DEFS = {
     "APEX5": {
         "code": "APEX5",
@@ -17,7 +17,8 @@ COUPON_DEFS = {
         "desc": "满 9.9 元可用，适合月度套餐",
         "valid_days": 7,
         "source": "welcome",
-        "claimable": False,  # 仅注册自动发放
+        "claimable": False,
+        "admin_grant": False,
     },
     "APEX10": {
         "code": "APEX10",
@@ -27,7 +28,42 @@ COUPON_DEFS = {
         "desc": "满 25 元可用，适合季度/年度套餐",
         "valid_days": 7,
         "source": "campaign",
-        "claimable": True,  # 活动页可领取一次
+        "claimable": True,
+        "admin_grant": False,
+    },
+    # 客服补偿券（不可自领，由管理员赠送；每次赠送生成唯一码）
+    "COMP5": {
+        "code": "COMP5",
+        "label": "客服补偿 ¥5",
+        "off": 5.0,
+        "min_amount": 9.9,
+        "desc": "客服补偿券，满 9.9 可用",
+        "valid_days": 14,
+        "source": "support",
+        "claimable": False,
+        "admin_grant": True,
+    },
+    "COMP10": {
+        "code": "COMP10",
+        "label": "客服补偿 ¥10",
+        "off": 10.0,
+        "min_amount": 9.9,
+        "desc": "客服补偿券，满 9.9 可用",
+        "valid_days": 14,
+        "source": "support",
+        "claimable": False,
+        "admin_grant": True,
+    },
+    "COMP20": {
+        "code": "COMP20",
+        "label": "客服补偿 ¥20",
+        "off": 20.0,
+        "min_amount": 25.0,
+        "desc": "客服补偿券，满 25 可用",
+        "valid_days": 14,
+        "source": "support",
+        "claimable": False,
+        "admin_grant": True,
     },
 }
 
@@ -40,14 +76,25 @@ def _now() -> datetime:
 
 def get_coupon_def(code: str) -> dict | None:
     c = (code or "").strip().upper()
-    d = COUPON_DEFS.get(c)
-    return dict(d) if d else None
+    if not c:
+        return None
+    if c in COUPON_DEFS:
+        return dict(COUPON_DEFS[c])
+    # 客服赠送唯一码：COMP10-T12 / COMP5-U3-2
+    for base in ("COMP20", "COMP10", "COMP5", "APEX10", "APEX5"):
+        if c == base or c.startswith(base + "-"):
+            d = dict(COUPON_DEFS[base])
+            d["code"] = c
+            return d
+    return None
 
 
 def list_campaign_coupons() -> list[dict]:
-    """可展示的活动券（含领取规则说明）。"""
+    """用户可见活动券（不含仅后台赠送的补偿券）。"""
     out = []
     for d in COUPON_DEFS.values():
+        if d.get("admin_grant") and not d.get("claimable") and d["source"] == "support":
+            continue
         item = dict(d)
         item["how_to_get"] = (
             "注册自动到账"
@@ -58,10 +105,38 @@ def list_campaign_coupons() -> list[dict]:
     return out
 
 
+def list_grantable_coupons() -> list[dict]:
+    """管理端可赠送的券模板。"""
+    return [dict(d) for d in COUPON_DEFS.values() if d.get("admin_grant")]
+
+
+def _meta_for_row(row: UserCoupon) -> dict:
+    meta = get_coupon_def(row.coupon_code) or {
+        "code": row.coupon_code,
+        "label": row.coupon_code,
+        "off": 0,
+        "min_amount": 0,
+        "desc": "",
+        "valid_days": 7,
+        "source": row.source or "",
+    }
+    label = (getattr(row, "label", None) or "").strip()
+    if label:
+        meta["label"] = label
+    if getattr(row, "off_amount", None) is not None:
+        meta["off"] = float(row.off_amount)
+    if getattr(row, "min_amount", None) is not None:
+        meta["min_amount"] = float(row.min_amount)
+    note = (getattr(row, "note", None) or "").strip()
+    if note:
+        meta["desc"] = note
+    meta["code"] = row.coupon_code
+    return meta
+
+
 def _coupon_status(row: UserCoupon) -> str:
     if row.used_at is not None:
         return "used"
-    # 已绑到待支付订单：占用中（取消订单会释放；支付成功会核销）
     if row.order_id is not None:
         return "reserved"
     if row.expire_at and row.expire_at <= _now():
@@ -70,14 +145,7 @@ def _coupon_status(row: UserCoupon) -> str:
 
 
 def _row_dict(row: UserCoupon) -> dict:
-    meta = get_coupon_def(row.coupon_code) or {
-        "code": row.coupon_code,
-        "label": row.coupon_code,
-        "off": 0,
-        "min_amount": 0,
-        "desc": "",
-        "valid_days": 7,
-    }
+    meta = _meta_for_row(row)
     status = _coupon_status(row)
     return {
         "id": row.id,
@@ -87,6 +155,7 @@ def _row_dict(row: UserCoupon) -> dict:
         "min_amount": float(meta.get("min_amount") or 0),
         "desc": meta.get("desc") or "",
         "source": row.source or meta.get("source") or "",
+        "note": getattr(row, "note", "") or "",
         "status": status,
         "claimed_at": row.claimed_at.isoformat() if row.claimed_at else "",
         "expire_at": row.expire_at.isoformat() if row.expire_at else "",
@@ -103,13 +172,16 @@ def grant_coupon(
     source: str = "",
     commit: bool = False,
 ) -> UserCoupon | None:
-    """给用户发一张券；同码已有记录则不重复发。"""
+    """给用户发一张模板券；同码已有记录则不重复发。"""
     meta = get_coupon_def(code)
     if not meta:
         return None
+    base_code = meta["code"] if meta["code"] in COUPON_DEFS else code.strip().upper()
+    # 活动/新人券用固定码；补偿唯一码已在 meta.code
+    store_code = base_code if base_code in COUPON_DEFS and not meta.get("admin_grant") else meta["code"]
     exists = (
         db.query(UserCoupon)
-        .filter(UserCoupon.user_id == user.id, UserCoupon.coupon_code == meta["code"])
+        .filter(UserCoupon.user_id == user.id, UserCoupon.coupon_code == store_code)
         .first()
     )
     if exists:
@@ -118,8 +190,11 @@ def grant_coupon(
     now = _now()
     row = UserCoupon(
         user_id=user.id,
-        coupon_code=meta["code"],
+        coupon_code=store_code,
         source=(source or meta.get("source") or "grant")[:40],
+        label=(meta.get("label") or "")[:80],
+        off_amount=float(meta.get("off") or 0),
+        min_amount=float(meta.get("min_amount") or 0),
         claimed_at=now,
         expire_at=now + timedelta(days=days),
     )
@@ -135,7 +210,6 @@ def grant_welcome_coupon(db: Session, user: User, *, commit: bool = False) -> Us
 
 
 def ensure_welcome_if_missing(db: Session, user: User) -> None:
-    """老用户打开券包时补发一次新人券（若从未领过）。"""
     grant_welcome_coupon(db, user, commit=True)
 
 
@@ -144,17 +218,79 @@ def claim_coupon(db: Session, user: User, code: str) -> UserCoupon:
     if not meta:
         raise ValueError("优惠券不存在")
     if not meta.get("claimable"):
-        raise ValueError("该券不可手动领取（注册自动发放）")
+        raise ValueError("该券不可手动领取")
+    fixed = meta["code"] if meta["code"] in COUPON_DEFS else code.strip().upper()
+    if fixed not in COUPON_DEFS or not COUPON_DEFS[fixed].get("claimable"):
+        raise ValueError("该券不可手动领取")
     exists = (
         db.query(UserCoupon)
-        .filter(UserCoupon.user_id == user.id, UserCoupon.coupon_code == meta["code"])
+        .filter(UserCoupon.user_id == user.id, UserCoupon.coupon_code == fixed)
         .first()
     )
     if exists:
         raise ValueError("你已领取过该优惠券，每人限领 1 张")
-    row = grant_coupon(db, user, meta["code"], source="claim", commit=True)
+    row = grant_coupon(db, user, fixed, source="claim", commit=True)
     if row is None:
         raise ValueError("领取失败")
+    return row
+
+
+def grant_support_coupon(
+    db: Session,
+    user: User,
+    template: str,
+    *,
+    ticket_id: int | None = None,
+    note: str = "",
+    off: float | None = None,
+    min_amount: float | None = None,
+    valid_days: int | None = None,
+    commit: bool = True,
+) -> UserCoupon:
+    """客服赠券：每次生成唯一券码，可多次赠送。"""
+    tpl = (template or "").strip().upper()
+    meta = COUPON_DEFS.get(tpl)
+    if meta is None or not meta.get("admin_grant"):
+        raise ValueError("不支持的补偿券模板，请使用 COMP5 / COMP10 / COMP20")
+    count = (
+        db.query(UserCoupon)
+        .filter(UserCoupon.user_id == user.id, UserCoupon.source == "support")
+        .count()
+    )
+    if ticket_id:
+        code = f"{tpl}-T{int(ticket_id)}"
+    else:
+        code = f"{tpl}-U{user.id}-{count + 1}"
+    # 同码冲突则加后缀
+    base = code
+    n = 1
+    while (
+        db.query(UserCoupon)
+        .filter(UserCoupon.user_id == user.id, UserCoupon.coupon_code == code)
+        .first()
+    ):
+        n += 1
+        code = f"{base}-{n}"
+
+    days = max(1, int(valid_days if valid_days is not None else meta.get("valid_days") or 14))
+    now = _now()
+    off_v = float(off if off is not None else meta["off"])
+    min_v = float(min_amount if min_amount is not None else meta["min_amount"])
+    row = UserCoupon(
+        user_id=user.id,
+        coupon_code=code,
+        source="support",
+        label=(meta.get("label") or f"客服补偿 ¥{off_v}")[:80],
+        off_amount=off_v,
+        min_amount=min_v,
+        note=(note or meta.get("desc") or "")[:200],
+        claimed_at=now,
+        expire_at=now + timedelta(days=days),
+    )
+    db.add(row)
+    if commit:
+        db.commit()
+        db.refresh(row)
     return row
 
 
@@ -170,12 +306,12 @@ def list_user_coupons(db: Session, user: User) -> list[dict]:
 
 
 def find_usable_coupon(db: Session, user: User, code: str) -> UserCoupon:
-    meta = get_coupon_def(code)
-    if not meta:
+    raw = (code or "").strip().upper()
+    if not raw:
         raise ValueError("优惠券无效或不存在")
     row = (
         db.query(UserCoupon)
-        .filter(UserCoupon.user_id == user.id, UserCoupon.coupon_code == meta["code"])
+        .filter(UserCoupon.user_id == user.id, UserCoupon.coupon_code == raw)
         .first()
     )
     if row is None:
@@ -186,7 +322,7 @@ def find_usable_coupon(db: Session, user: User, code: str) -> UserCoupon:
     if status == "reserved":
         raise ValueError("该优惠券正在支付订单中占用，请先取消待支付订单或完成支付")
     if status == "expired":
-        raise ValueError("该优惠券已过期（领取后 7 天内有效）")
+        raise ValueError("该优惠券已过期")
     return row
 
 
@@ -200,7 +336,7 @@ def apply_user_coupon(
     if not code:
         return float(amount), None, None
     row = find_usable_coupon(db, user, code)
-    meta = get_coupon_def(code) or {}
+    meta = _meta_for_row(row)
     price = float(amount)
     if price < float(meta.get("min_amount") or 0):
         raise ValueError(f"未满足优惠券门槛（满 {meta.get('min_amount')} 元）")
@@ -209,7 +345,6 @@ def apply_user_coupon(
 
 
 def reserve_coupon(db: Session, row: UserCoupon, order_id: int) -> None:
-    """下单时占用优惠券，支付成功前不算已使用。"""
     if row.used_at is not None:
         raise ValueError("该优惠券已使用，每人限用 1 次")
     if row.order_id is not None and int(row.order_id) != int(order_id):
@@ -218,14 +353,12 @@ def reserve_coupon(db: Session, row: UserCoupon, order_id: int) -> None:
 
 
 def release_coupon(db: Session, row: UserCoupon) -> None:
-    """取消/关闭订单时释放占用。"""
     if row.used_at is not None:
         return
     row.order_id = None
 
 
 def mark_coupon_used(db: Session, row: UserCoupon, order_id: int) -> None:
-    """支付成功后核销。"""
     row.order_id = int(order_id)
     if row.used_at is None:
         row.used_at = _now()

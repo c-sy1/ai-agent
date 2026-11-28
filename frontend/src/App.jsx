@@ -14,6 +14,7 @@ import AdminLayout from "./pages/AdminLayout";
 import MapChat from "./pages/MapChat";
 import Knowledge from "./pages/Knowledge";
 import FeedbackAdmin from "./pages/FeedbackAdmin";
+import SupportAdmin from "./pages/SupportAdmin";
 
 /** 普通用户区：未登录去用户登录；管理员请走管理端 */
 function RequireUser({ children }) {
@@ -76,6 +77,7 @@ export default function App() {
       >
         <Route index element={<Admin />} />
         <Route path="feedback" element={<FeedbackAdmin />} />
+        <Route path="support" element={<SupportAdmin />} />
         <Route path="knowledge" element={<Knowledge manage />} />
       </Route>
 
