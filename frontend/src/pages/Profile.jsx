@@ -15,7 +15,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "优惠券怎么用？从哪获得？",
-    a: "注册自动获赠新人券 APEX5；活动券 APEX10 可在个人中心领取一次。领取后 7 天内有效，每人每张限用 1 次。点选「可用」券后再支付即可抵扣。",
+    a: "注册自动获赠新人券 APEX5；活动券 APEX10 可在个人中心领取一次。领取后 7 天内有效，每人每张限用 1 次。点选可用券后再支付即可抵扣；待支付订单会暂时占用优惠券，取消订单后自动退回。",
   },
   {
     q: "VIP 到期后会怎样？",
@@ -377,6 +377,14 @@ export default function Profile() {
         setPayToast({ type: "err", title: "无法使用", message: "该优惠券已使用，每人限用 1 次。" });
         return;
       }
+      if (owned?.status === "reserved") {
+        setPayToast({
+          type: "err",
+          title: "优惠券占用中",
+          message: "该券正在待支付订单中占用，请先取消订单或完成支付。",
+        });
+        return;
+      }
       if (owned?.status === "expired") {
         setPayToast({ type: "err", title: "无法使用", message: "该优惠券已过期（领取后 7 天内有效）。" });
         return;
@@ -630,11 +638,13 @@ export default function Profile() {
                       {c.code}
                       {c.status === "available" && c.expire_at
                         ? ` · ${String(c.expire_at).slice(0, 10)} 前有效`
-                        : c.status === "used"
-                          ? " · 已使用"
-                          : c.status === "expired"
-                            ? " · 已过期"
-                            : ""}
+                        : c.status === "reserved"
+                          ? " · 支付中占用"
+                          : c.status === "used"
+                            ? " · 已使用"
+                            : c.status === "expired"
+                              ? " · 已过期"
+                              : ""}
                     </em>
                   </button>
                 );

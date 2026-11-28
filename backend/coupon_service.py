@@ -61,6 +61,9 @@ def list_campaign_coupons() -> list[dict]:
 def _coupon_status(row: UserCoupon) -> str:
     if row.used_at is not None:
         return "used"
+    # 已绑到待支付订单：占用中（取消订单会释放；支付成功会核销）
+    if row.order_id is not None:
+        return "reserved"
     if row.expire_at and row.expire_at <= _now():
         return "expired"
     return "available"
@@ -180,6 +183,8 @@ def find_usable_coupon(db: Session, user: User, code: str) -> UserCoupon:
     status = _coupon_status(row)
     if status == "used":
         raise ValueError("该优惠券已使用，每人限用 1 次")
+    if status == "reserved":
+        raise ValueError("该优惠券正在支付订单中占用，请先取消待支付订单或完成支付")
     if status == "expired":
         raise ValueError("该优惠券已过期（领取后 7 天内有效）")
     return row
@@ -203,8 +208,34 @@ def apply_user_coupon(
     return paid, meta, row
 
 
-def mark_coupon_used(db: Session, row: UserCoupon, order_id: int) -> None:
+def reserve_coupon(db: Session, row: UserCoupon, order_id: int) -> None:
+    """下单时占用优惠券，支付成功前不算已使用。"""
+    if row.used_at is not None:
+        raise ValueError("该优惠券已使用，每人限用 1 次")
+    if row.order_id is not None and int(row.order_id) != int(order_id):
+        raise ValueError("该优惠券正在其他订单中占用")
+    row.order_id = int(order_id)
+
+
+def release_coupon(db: Session, row: UserCoupon) -> None:
+    """取消/关闭订单时释放占用。"""
     if row.used_at is not None:
         return
-    row.used_at = _now()
+    row.order_id = None
+
+
+def mark_coupon_used(db: Session, row: UserCoupon, order_id: int) -> None:
+    """支付成功后核销。"""
     row.order_id = int(order_id)
+    if row.used_at is None:
+        row.used_at = _now()
+
+
+def mark_coupon_used_for_order(db: Session, user_id: int, order_id: int) -> None:
+    row = (
+        db.query(UserCoupon)
+        .filter(UserCoupon.user_id == user_id, UserCoupon.order_id == order_id)
+        .first()
+    )
+    if row is not None:
+        mark_coupon_used(db, row, order_id)

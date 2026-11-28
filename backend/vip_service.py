@@ -138,7 +138,7 @@ def create_vip_order(
     coupon_code: str = "",
 ) -> tuple[RechargeOrder, dict]:
     """创建待支付订单并返回支付参数。channel: alipay | wechat。"""
-    from coupon_service import apply_user_coupon, mark_coupon_used
+    from coupon_service import apply_user_coupon, release_coupon, reserve_coupon
 
     pkg = get_package(package_id)
     if not pkg:
@@ -187,13 +187,15 @@ def create_vip_order(
             )
             pay = {"channel": "alipay", "pay_url": pay_url, "code_url": ""}
     except (PaymentConfigError, WechatPaymentConfigError):
+        if coupon_row is not None:
+            release_coupon(db, coupon_row)
         order.status = "closed"
         order.remark = "支付未配置"
         db.commit()
         raise
 
     if coupon_row is not None:
-        mark_coupon_used(db, coupon_row, order.id)
+        reserve_coupon(db, coupon_row, order.id)
     db.commit()
     db.refresh(order)
 
@@ -250,6 +252,9 @@ def mark_order_paid(
     order.status = "paid"
     order.remark = f"{label}已支付 {trade_no}".strip()
     order.channel = ch
+    from coupon_service import mark_coupon_used_for_order
+
+    mark_coupon_used_for_order(db, order.user_id, order.id)
     db.commit()
     db.refresh(order)
     from sms_service import notify_vip_opened

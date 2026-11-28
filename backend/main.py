@@ -1571,15 +1571,16 @@ def vip_cancel_order(
         raise HTTPException(status_code=400, detail="只能取消待支付订单")
     order.status = "cancelled"
     order.remark = "用户取消"
-    # 取消待支付订单时退回已占用的优惠券
+    # 取消待支付订单时释放占用中的优惠券
+    from coupon_service import release_coupon
+
     linked = (
         db.query(UserCoupon)
         .filter(UserCoupon.order_id == order.id, UserCoupon.user_id == order.user_id)
         .first()
     )
     if linked is not None:
-        linked.used_at = None
-        linked.order_id = None
+        release_coupon(db, linked)
     db.commit()
     return {"code": 200, "msg": "订单已取消"}
 

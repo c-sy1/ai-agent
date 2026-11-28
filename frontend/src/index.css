@@ -774,6 +774,7 @@ a.user-bar-link.active {
 
 .coupon-card:disabled,
 .coupon-card.status-used,
+.coupon-card.status-reserved,
 .coupon-card.status-expired {
   opacity: 0.55;
   cursor: not-allowed;
@@ -781,6 +782,10 @@ a.user-bar-link.active {
 
 .coupon-card.status-used {
   border-style: dashed;
+}
+
+.coupon-card.status-reserved {
+  border-color: #e67e22;
 }
 
 .coupon-claim-row {
