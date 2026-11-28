@@ -72,39 +72,32 @@ export default function Knowledge({ manage = false }) {
     }
   };
 
-  return (
-    <div className="page-scroll kb-page">
-      <header className="kb-header">
-        <div>
-          <p className="kb-eyebrow">Knowledge</p>
-          <h1>知识库</h1>
-          <p className="kb-lead">
-            {canManage
-              ? "管理端维护共享资料；用户端仅可浏览，对话时会自动引用。"
-              : (
-                <>
-                  共享知识库仅供浏览；在 <Link to="/chat">对话</Link> 提问时会自动引用。
-                  资料由管理端维护。
-                </>
-              )}
-          </p>
-        </div>
-        <div className="kb-stat">
-          <strong>{docs.length}</strong>
-          <span>{category === "全部" ? "篇文档" : "篇 · 当前分类"}</span>
-        </div>
-      </header>
+  if (canManage) {
+    return (
+      <div className="admin-vip-page admin-kb-page">
+        <header className="admin-vip-toolbar">
+          <div className="admin-vip-heading">
+            <h1 className="admin-vip-title">知识库维护</h1>
+            <div className="admin-vip-stats">
+              <span>
+                文档 <b>{docs.length}</b>
+              </span>
+              <span>
+                分类 <b>{category}</b>
+              </span>
+            </div>
+          </div>
+        </header>
 
-      {canManage ? (
-        <section className="kb-composer">
-          <div className="kb-composer-top">
+        <section className="admin-kb-composer">
+          <div className="admin-kb-composer-top">
             <h2>新增资料</h2>
-            <div className="kb-cat-select">
+            <div className="admin-kb-cat-select">
               {CATS.filter((c) => c !== "全部").map((c) => (
                 <button
                   key={c}
                   type="button"
-                  className={`kb-mini-tab${newCat === c ? " on" : ""}`}
+                  className={`admin-kb-chip${newCat === c ? " on" : ""}`}
                   onClick={() => setNewCat(c)}
                 >
                   {c}
@@ -113,22 +106,22 @@ export default function Knowledge({ manage = false }) {
             </div>
           </div>
           <input
-            className="kb-input"
+            className="admin-kb-input"
             placeholder="标题，例如：VIP 套餐说明"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
           <textarea
-            className="kb-textarea"
+            className="admin-kb-textarea"
             rows={4}
             placeholder="粘贴正文：使用说明、业务资料、常见问题…"
             value={content}
             onChange={(e) => setContent(e.target.value)}
           />
-          <div className="kb-composer-actions">
+          <div className="admin-kb-composer-actions">
             <button
               type="button"
-              className="btn-primary"
+              className="admin-btn admin-btn-primary"
               disabled={saving || !title.trim() || !content.trim()}
               onClick={create}
             >
@@ -138,11 +131,87 @@ export default function Knowledge({ manage = false }) {
             {error && <span className="kb-err">{error}</span>}
           </div>
         </section>
-      ) : (
-        <p className="kb-muted" style={{ textAlign: "left", padding: "0 0 16px" }}>
-          仅可查看；新增/删除请使用管理端（/admin/login）。
-        </p>
-      )}
+
+        <div className="admin-tabs" role="tablist">
+          {CATS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              role="tab"
+              className={category === c ? "on" : ""}
+              onClick={() => setCategory(c)}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+
+        {loading ? (
+          <p className="admin-vip-loading">加载中…</p>
+        ) : docs.length === 0 ? (
+          <div className="admin-panel">
+            <p className="admin-empty">该分类暂无文档，上方可新增。</p>
+          </div>
+        ) : (
+          <div className="admin-kb-list">
+            {docs.map((d) => {
+              const open = expanded === d.id;
+              return (
+                <article key={d.id} className={`admin-kb-item${open ? " open" : ""}`}>
+                  <button
+                    type="button"
+                    className="admin-kb-item-main"
+                    onClick={() => setExpanded(open ? null : d.id)}
+                  >
+                    <span className={`admin-pill kb-cat ${CAT_TONE[d.category] || ""}`}>
+                      {d.category}
+                    </span>
+                    <div className="admin-kb-item-text">
+                      <strong>{d.title}</strong>
+                      <p>
+                        {open
+                          ? d.content
+                          : `${d.content.slice(0, 100)}${d.content.length > 100 ? "…" : ""}`}
+                      </p>
+                    </div>
+                    <span className="admin-kb-chevron">{open ? "收起" : "展开"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="admin-btn admin-btn-ghost"
+                    onClick={() => remove(d.id)}
+                  >
+                    删除
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="page-scroll kb-page">
+      <header className="kb-header">
+        <div>
+          <p className="kb-eyebrow">Knowledge</p>
+          <h1>知识库</h1>
+          <p className="kb-lead">
+            共享知识库仅供浏览；在 <Link to="/chat">对话</Link> 提问时会自动引用。
+            资料由管理端维护。
+          </p>
+        </div>
+        <div className="kb-stat">
+          <strong>{docs.length}</strong>
+          <span>{category === "全部" ? "篇文档" : "篇 · 当前分类"}</span>
+        </div>
+      </header>
+
+      <p className="kb-muted" style={{ textAlign: "left", padding: "0 0 16px" }}>
+        仅可查看；新增/删除请使用管理端（/admin/login）。
+      </p>
 
       <div className="kb-filter">
         {CATS.map((c) => (
@@ -180,23 +249,13 @@ export default function Knowledge({ manage = false }) {
                 </div>
                 <span className="kb-chevron">{open ? "收起" : "展开"}</span>
               </button>
-              {canManage ? (
-                <div className="kb-item-actions">
-                  <button type="button" className="kb-del" onClick={() => remove(d.id)}>
-                    删除
-                  </button>
-                </div>
-              ) : null}
             </article>
           );
         })}
       </div>
 
-      {!loading && docs.length === 0 && (
-        <p className="kb-muted">
-          {canManage ? "该分类暂无文档，上方可新增。" : "该分类暂无文档。"}
-        </p>
-      )}
+      {!loading && docs.length === 0 && <p className="kb-muted">该分类暂无文档。</p>}
+      {error && <p className="kb-err">{error}</p>}
     </div>
   );
 }

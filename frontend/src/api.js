@@ -184,6 +184,12 @@ export const api = {
       timeoutMs: 180000,
     }),
   vipPackages: () => request("/api/vip/packages"),
+  vipCouponsMine: () => request("/api/vip/coupons/mine"),
+  vipCouponClaim: (code) =>
+    request("/api/vip/coupons/claim", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
   vipStatus: (userId) => request(`/api/vip/status?user_id=${userId}`),
   vipRecharge: (body) =>
     request("/api/vip/recharge", { method: "POST", body: JSON.stringify(body) }),
@@ -202,15 +208,30 @@ export const api = {
     }),
   adminUsers: (adminUserId) =>
     request(`/api/admin/users?admin_user_id=${adminUserId}`),
+  adminUserDetail: (userId) => request(`/api/admin/users/${userId}`),
   adminGrantVip: (body) =>
     request("/api/admin/vip/grant", { method: "POST", body: JSON.stringify(body) }),
+  adminGrantVipBatch: (body) =>
+    request("/api/admin/vip/grant-batch", { method: "POST", body: JSON.stringify(body) }),
   adminRevokeVip: (body) =>
     request("/api/admin/vip/revoke", { method: "POST", body: JSON.stringify(body) }),
   adminRecharges: (adminUserId) =>
     request(`/api/admin/recharges?admin_user_id=${adminUserId}`),
+  adminOpLogs: (limit = 100) => request(`/api/admin/op-logs?limit=${limit}`),
   submitFeedback: (body) =>
     request("/api/feedback", { method: "POST", body: JSON.stringify(body) }),
   adminFeedback: () => request("/api/admin/feedback"),
+  adminFeedbackUpdate: (id, body) =>
+    request(`/api/admin/feedback/${id}/update`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  adminFeedbackBatch: (body) =>
+    request("/api/admin/feedback/batch", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  adminFeedbackContext: (id) => request(`/api/admin/feedback/${id}/context`),
   knowledgeCategories: () => request("/api/knowledge/categories"),
   knowledgeDocs: (category) =>
     request(`/api/knowledge/docs${category ? `?category=${encodeURIComponent(category)}` : ""}`),

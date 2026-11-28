@@ -130,6 +130,45 @@ class RechargeOrder(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
+class UserCoupon(Base):
+    """用户持有的优惠券（领取后有有效期，每人每码限用一次）。"""
+
+    __tablename__ = "user_coupons"
+    __table_args__ = (
+        UniqueConstraint("user_id", "coupon_code", name="uq_user_coupon_code"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    coupon_code = Column(String(40), nullable=False, index=True)
+    source = Column(String(40), nullable=False, default="")  # welcome|claim|grant
+    claimed_at = Column(DateTime, nullable=False, server_default=func.now())
+    expire_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    order_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class AdminOpLog(Base):
+    """管理员操作日志（开通/取消 VIP 等）。"""
+
+    __tablename__ = "admin_op_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    admin_user_id = Column(Integer, nullable=False, default=0, index=True)
+    admin_username = Column(String(50), nullable=False, default="")
+    action = Column(String(50), nullable=False, default="", index=True)
+    target_user_id = Column(Integer, nullable=True, index=True)
+    target_username = Column(String(50), nullable=False, default="")
+    detail = Column(String(500), nullable=False, default="")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
 class UsageDaily(Base):
     """用户每日用量（对话 / 生图），用于免费额度与 VIP 差异。"""
 
@@ -232,6 +271,8 @@ class ChatFeedback(Base):
     )
     rating = Column(String(10), nullable=False)  # up | down
     comment = Column(String(500), nullable=False, default="")
+    handle_status = Column(String(20), nullable=False, default="pending")  # pending|processing|resolved
+    issue_tag = Column(String(40), nullable=False, default="")  # hallucination|kb_missing|bug|other|""
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
@@ -314,6 +355,20 @@ def _migrate_tool_columns():
                 conn.execute(
                     text(
                         "ALTER TABLE recharge_orders ADD COLUMN out_trade_no VARCHAR(64) NOT NULL DEFAULT ''"
+                    )
+                )
+        if "chat_feedbacks" in tables:
+            fnames = {c["name"] for c in insp.get_columns("chat_feedbacks")}
+            if "handle_status" not in fnames:
+                conn.execute(
+                    text(
+                        "ALTER TABLE chat_feedbacks ADD COLUMN handle_status VARCHAR(20) NOT NULL DEFAULT 'pending'"
+                    )
+                )
+            if "issue_tag" not in fnames:
+                conn.execute(
+                    text(
+                        "ALTER TABLE chat_feedbacks ADD COLUMN issue_tag VARCHAR(40) NOT NULL DEFAULT ''"
                     )
                 )
 

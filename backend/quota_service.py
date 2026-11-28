@@ -1,7 +1,7 @@
 """日额度：免费用户限量，VIP 高额度/不限，促转化留存。"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -94,21 +94,51 @@ def require_and_consume(db: Session, user: User, feature: str) -> None:
     db.commit()
 
 
+def usage_week(db: Session, user_id: int, days: int = 7) -> list[dict]:
+    """近 N 天用量（含无记录的日期，补 0）。"""
+    days = max(1, min(30, int(days or 7)))
+    today = datetime.utcnow().date()
+    start = today - timedelta(days=days - 1)
+    start_s = start.strftime("%Y-%m-%d")
+    rows = (
+        db.query(UsageDaily)
+        .filter(UsageDaily.user_id == user_id, UsageDaily.day >= start_s)
+        .all()
+    )
+    by_day = {r.day: r for r in rows}
+    out = []
+    for i in range(days):
+        d = (start + timedelta(days=i)).strftime("%Y-%m-%d")
+        row = by_day.get(d)
+        out.append(
+            {
+                "day": d,
+                "chat": int(row.chat_count) if row else 0,
+                "image": int(row.image_count) if row else 0,
+            }
+        )
+    return out
+
+
 def usage_summary(db: Session, user: User) -> dict:
     limits = _limits_for(user)
     used = usage_counts(db, user.id)
     vip = is_vip_active(user)
+    week = usage_week(db, user.id, 7)
+    week_chat = sum(x["chat"] for x in week)
+    week_image = sum(x["image"] for x in week)
 
     def item(feature: str) -> dict:
         lim = int(limits[feature])
         u = int(used.get(feature, 0))
+        unlimited = vip and lim >= 9999
         return {
             "feature": feature,
             "label": FEATURE_LABELS[feature],
             "used": u,
             "limit": lim,
             "remain": max(0, lim - u),
-            "unlimited": vip and lim >= 9999,
+            "unlimited": unlimited,
         }
 
     return {
@@ -116,6 +146,8 @@ def usage_summary(db: Session, user: User) -> dict:
         "is_vip": vip,
         "chat": item("chat"),
         "image": item("image"),
+        "week": week,
+        "week_totals": {"chat": week_chat, "image": week_image},
         "benefits": {
             "free": [
                 f"每日 {FREE_LIMITS['chat']} 次 AI 对话",
@@ -123,10 +155,44 @@ def usage_summary(db: Session, user: User) -> dict:
                 "视频生成、PPT 下载需开通 VIP",
             ],
             "vip": [
-                "海量对话与生图额度",
+                "AI 对话额度不限",
+                "更高 AI 生图额度",
                 "解锁 AI 视频生成",
                 "解锁 PPT 可下载文稿",
-                "优先体验持续更新能力",
+            ],
+        },
+        "benefit_details": {
+            "free": [
+                {
+                    "title": f"每日 {FREE_LIMITS['chat']} 次 AI 对话",
+                    "detail": f"免费用户每天可进行 {FREE_LIMITS['chat']} 次 AI 对话，用完后可开通 VIP 继续畅用。",
+                },
+                {
+                    "title": f"每日 {FREE_LIMITS['image']} 次 AI 生图",
+                    "detail": f"免费用户每天可生成 {FREE_LIMITS['image']} 张图片，VIP 提升至每日 {VIP_LIMITS['image']} 次。",
+                },
+                {
+                    "title": "视频生成、PPT 下载需开通 VIP",
+                    "detail": "AI 视频生成与 PPT 文稿下载为会员专属能力，开通任意 VIP 套餐即可使用。",
+                },
+            ],
+            "vip": [
+                {
+                    "title": "AI 对话额度不限",
+                    "detail": "VIP 用户 AI 对话按「不限」展示，适合高频问答与长对话场景。",
+                },
+                {
+                    "title": "更高 AI 生图额度",
+                    "detail": f"VIP 每日生图额度提升至 {VIP_LIMITS['image']} 次，满足批量创作需求。",
+                },
+                {
+                    "title": "解锁 AI 视频生成",
+                    "detail": "会员可使用工具箱中的 AI 视频生成能力，按任务消耗对应资源。",
+                },
+                {
+                    "title": "解锁 PPT 可下载文稿",
+                    "detail": "会员可导出 PPT 文稿，便于演示与二次编辑。",
+                },
             ],
         },
     }

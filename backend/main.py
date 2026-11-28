@@ -35,7 +35,14 @@ from map_service import (
 )
 
 from media_service import GENERATED_ROOT, MediaError
+from coupon_service import (
+    claim_coupon,
+    grant_welcome_coupon,
+    list_campaign_coupons,
+    list_user_coupons,
+)
 from database import (
+    AdminOpLog,
     Agent,
     ChatFeedback,
     ChatMessage,
@@ -46,6 +53,7 @@ from database import (
     SmsLog,
     Tool,
     User,
+    UserCoupon,
     SessionLocal,
     get_db,
     init_db,
@@ -94,6 +102,8 @@ from vip_service import (
     VipRequiredError,
     create_vip_order,
     extend_vip,
+    get_package,
+    list_public_packages,
     mark_order_paid,
     rebuild_pay_payload,
     revoke_vip,
@@ -297,6 +307,8 @@ def register(req: RegisterReq, db: Session = Depends(get_db)):
     )
     db.add(user)
     try:
+        db.flush()
+        grant_welcome_coupon(db, user, commit=False)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -304,7 +316,7 @@ def register(req: RegisterReq, db: Session = Depends(get_db)):
     db.refresh(user)
     return {
         "code": 200,
-        "msg": "注册成功",
+        "msg": "注册成功，新人优惠券已到账（7 天内有效）",
         "data": auth_payload_for(user),
     }
 
@@ -1071,6 +1083,8 @@ def submit_feedback(
             user_id=req.user_id,
             rating=rating,
             comment=(req.comment or "").strip()[:500],
+            handle_status="pending",
+            issue_tag="",
         )
         db.add(row)
     else:
@@ -1078,6 +1092,36 @@ def submit_feedback(
         row.comment = (req.comment or "").strip()[:500]
     db.commit()
     return {"code": 200, "msg": "已记录反馈", "data": {"rating": rating}}
+
+
+def _feedback_row(db: Session, f: ChatFeedback) -> dict:
+    msg = db.get(ChatMessage, f.message_id)
+    user = db.get(User, f.user_id)
+    return {
+        "id": f.id,
+        "rating": f.rating,
+        "comment": f.comment or "",
+        "handle_status": getattr(f, "handle_status", None) or "pending",
+        "issue_tag": getattr(f, "issue_tag", None) or "",
+        "user_id": f.user_id,
+        "username": user.username if user else "",
+        "nickname": (user.nickname if user else "") or "",
+        "message_id": f.message_id,
+        "conversation_id": f.conversation_id,
+        "content_preview": (msg.content or "")[:160] if msg else "",
+        "created_at": f.created_at.isoformat() if f.created_at else "",
+    }
+
+
+class AdminFeedbackUpdateReq(BaseModel):
+    comment: str | None = None
+    handle_status: str | None = None
+    issue_tag: str | None = None
+
+
+class AdminFeedbackBatchReq(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+    handle_status: str = "processing"
 
 
 @app.get("/api/admin/feedback")
@@ -1089,27 +1133,106 @@ def admin_feedback(
     rows = (
         db.query(ChatFeedback)
         .order_by(ChatFeedback.id.desc())
-        .limit(200)
+        .limit(300)
         .all()
     )
-    out = []
-    for f in rows:
-        msg = db.get(ChatMessage, f.message_id)
-        user = db.get(User, f.user_id)
-        out.append(
-            {
-                "id": f.id,
-                "rating": f.rating,
-                "comment": f.comment,
-                "user_id": f.user_id,
-                "username": user.username if user else "",
-                "message_id": f.message_id,
-                "conversation_id": f.conversation_id,
-                "content_preview": (msg.content or "")[:160] if msg else "",
-                "created_at": f.created_at.isoformat() if f.created_at else "",
-            }
+    return {"code": 200, "data": [_feedback_row(db, f) for f in rows]}
+
+
+@app.post("/api/admin/feedback/{feedback_id}/update")
+def admin_feedback_update(
+    feedback_id: int,
+    req: AdminFeedbackUpdateReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin_mfa(auth)
+    row = db.get(ChatFeedback, feedback_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="反馈不存在")
+    if req.comment is not None:
+        row.comment = (req.comment or "").strip()[:500]
+    if req.handle_status is not None:
+        status = (req.handle_status or "").strip().lower()
+        if status not in ("pending", "processing", "resolved"):
+            raise HTTPException(status_code=400, detail="处理状态无效")
+        row.handle_status = status
+    if req.issue_tag is not None:
+        tag = (req.issue_tag or "").strip().lower()
+        if tag and tag not in ("hallucination", "kb_missing", "bug", "other"):
+            raise HTTPException(status_code=400, detail="问题标签无效")
+        row.issue_tag = tag
+    db.commit()
+    db.refresh(row)
+    return {"code": 200, "msg": "已更新", "data": _feedback_row(db, row)}
+
+
+@app.post("/api/admin/feedback/batch")
+def admin_feedback_batch(
+    req: AdminFeedbackBatchReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin_mfa(auth)
+    status = (req.handle_status or "").strip().lower()
+    if status not in ("pending", "processing", "resolved"):
+        raise HTTPException(status_code=400, detail="处理状态无效")
+    ids = sorted({int(i) for i in (req.ids or []) if int(i) > 0})
+    if not ids:
+        raise HTTPException(status_code=400, detail="请选择反馈")
+    rows = db.query(ChatFeedback).filter(ChatFeedback.id.in_(ids)).all()
+    for row in rows:
+        row.handle_status = status
+    db.commit()
+    return {"code": 200, "msg": f"已更新 {len(rows)} 条", "data": {"count": len(rows)}}
+
+
+@app.get("/api/admin/feedback/{feedback_id}/context")
+def admin_feedback_context(
+    feedback_id: int,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin(auth)
+    row = db.get(ChatFeedback, feedback_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="反馈不存在")
+    conv_id = int(row.conversation_id or 0)
+    msgs = []
+    if conv_id > 0:
+        msgs = (
+            db.query(ChatMessage)
+            .filter(ChatMessage.conversation_id == conv_id)
+            .order_by(ChatMessage.id.asc())
+            .limit(80)
+            .all()
         )
-    return {"code": 200, "data": out}
+    else:
+        target = db.get(ChatMessage, row.message_id)
+        if target is not None:
+            msgs = (
+                db.query(ChatMessage)
+                .filter(ChatMessage.conversation_id == target.conversation_id)
+                .order_by(ChatMessage.id.asc())
+                .limit(80)
+                .all()
+            )
+    return {
+        "code": 200,
+        "data": {
+            "feedback": _feedback_row(db, row),
+            "messages": [
+                {
+                    "id": m.id,
+                    "role": m.role,
+                    "content": m.content,
+                    "created_at": m.created_at.isoformat() if m.created_at else "",
+                    "is_target": m.id == row.message_id,
+                }
+                for m in msgs
+            ],
+        },
+    }
 
 
 @app.get("/api/knowledge/categories")
@@ -1237,6 +1360,7 @@ class RechargeReq(BaseModel):
     package_id: str
     channel: str = "alipay"  # alipay | wechat
     sms_code: str = ""
+    coupon_code: str = ""
 
 
 class OrderActionReq(BaseModel):
@@ -1248,11 +1372,39 @@ class AdminGrantVipReq(BaseModel):
     admin_user_id: int
     user_id: int
     days: int = 30
+    package_id: str = ""
+
+
+class AdminBatchGrantVipReq(BaseModel):
+    admin_user_id: int = 0
+    user_ids: list[int] = Field(default_factory=list)
+    days: int = 30
+    package_id: str = ""
 
 
 class AdminRevokeVipReq(BaseModel):
     admin_user_id: int
     user_id: int
+
+
+def _write_admin_log(
+    db: Session,
+    admin: User,
+    *,
+    action: str,
+    detail: str,
+    target: User | None = None,
+) -> None:
+    db.add(
+        AdminOpLog(
+            admin_user_id=int(admin.id),
+            admin_username=admin.username or "",
+            action=action,
+            target_user_id=int(target.id) if target else None,
+            target_username=(target.username if target else "") or "",
+            detail=(detail or "")[:500],
+        )
+    )
 
 
 @app.get("/api/vip/packages")
@@ -1262,7 +1414,8 @@ def vip_packages():
     return {
         "code": 200,
         "data": {
-            "packages": VIP_PACKAGES,
+            "packages": list_public_packages(),
+            "coupons": list_campaign_coupons(),
             "features": VIP_FEATURE_LABELS,
             "pay_ready": ali or wx,
             "pay_channel": "alipay",
@@ -1270,7 +1423,45 @@ def vip_packages():
                 "alipay": ali,
                 "wechat": wx,
             },
+            "refund_note": "虚拟会员服务开通后不支持无理由退款；支付异常请联系管理员核对订单。",
+            "coupon_rules": "新人注册自动获赠 APEX5（7 天有效、限用 1 次）；APEX10 可在个人中心领取一次。",
         },
+    }
+
+
+class CouponClaimReq(BaseModel):
+    code: str
+
+
+@app.get("/api/vip/coupons/mine")
+def vip_coupons_mine(
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    return {
+        "code": 200,
+        "data": {
+            "mine": list_user_coupons(db, auth),
+            "campaign": list_campaign_coupons(),
+            "rules": "注册送 APEX5；活动券 APEX10 可领 1 次；领取后 7 天内有效，每人每券限用 1 次。",
+        },
+    }
+
+
+@app.post("/api/vip/coupons/claim")
+def vip_coupons_claim(
+    req: CouponClaimReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    try:
+        row = claim_coupon(db, auth, req.code)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {
+        "code": 200,
+        "msg": f"已领取 {row.coupon_code}，请在 7 天内使用",
+        "data": list_user_coupons(db, auth),
     }
 
 
@@ -1296,7 +1487,11 @@ def vip_recharge(
     user = _user_or_404(db, req.user_id)
     try:
         order, pay = create_vip_order(
-            db, user, req.package_id, channel=req.channel or "alipay"
+            db,
+            user,
+            req.package_id,
+            channel=req.channel or "alipay",
+            coupon_code=req.coupon_code or "",
         )
     except (PaymentConfigError, WechatPaymentConfigError) as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
@@ -1322,6 +1517,27 @@ def vip_recharge(
     }
 
 
+def _order_public_dict(r: RechargeOrder) -> dict:
+    return {
+        "id": r.id,
+        "out_trade_no": r.out_trade_no or "",
+        "package_id": r.package_id or "",
+        "package_name": r.package_name,
+        "amount": r.amount,
+        "days": r.days,
+        "status": r.status,
+        "channel": r.channel or "",
+        "remark": r.remark or "",
+        "created_at": r.created_at.isoformat() if r.created_at else "",
+    }
+
+
+def _is_test_order(r: RechargeOrder) -> bool:
+    pid = (r.package_id or "").strip().lower()
+    name = r.package_name or ""
+    return pid == "vip_test" or "支付测试" in name or "1分钱" in name
+
+
 @app.get("/api/vip/orders/{order_id}")
 def vip_order_detail(
     order_id: int,
@@ -1334,18 +1550,9 @@ def vip_order_detail(
     order = db.get(RechargeOrder, order_id)
     if order is None or order.user_id != user_id:
         raise HTTPException(status_code=404, detail="订单不存在")
-    return {
-        "code": 200,
-        "data": {
-            "id": order.id,
-            "out_trade_no": order.out_trade_no,
-            "package_name": order.package_name,
-            "amount": order.amount,
-            "days": order.days,
-            "status": order.status,
-            "created_at": order.created_at.isoformat() if order.created_at else "",
-        },
-    }
+    if _is_test_order(order) and not auth.is_admin:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    return {"code": 200, "data": _order_public_dict(order)}
 
 
 @app.post("/api/vip/orders/{order_id}/cancel")
@@ -1364,6 +1571,15 @@ def vip_cancel_order(
         raise HTTPException(status_code=400, detail="只能取消待支付订单")
     order.status = "cancelled"
     order.remark = "用户取消"
+    # 取消待支付订单时退回已占用的优惠券
+    linked = (
+        db.query(UserCoupon)
+        .filter(UserCoupon.order_id == order.id, UserCoupon.user_id == order.user_id)
+        .first()
+    )
+    if linked is not None:
+        linked.used_at = None
+        linked.order_id = None
     db.commit()
     return {"code": 200, "msg": "订单已取消"}
 
@@ -1471,25 +1687,12 @@ def vip_orders(
         db.query(RechargeOrder)
         .filter(RechargeOrder.user_id == user_id)
         .order_by(RechargeOrder.id.desc())
-        .limit(50)
+        .limit(100)
         .all()
     )
-    return {
-        "code": 200,
-        "data": [
-            {
-                "id": r.id,
-                "out_trade_no": r.out_trade_no,
-                "package_name": r.package_name,
-                "amount": r.amount,
-                "days": r.days,
-                "status": r.status,
-                "channel": r.channel,
-                "created_at": r.created_at.isoformat() if r.created_at else "",
-            }
-            for r in rows
-        ],
-    }
+    # 用户前台隐藏「支付测试（1分钱）」订单
+    visible = [r for r in rows if not _is_test_order(r)]
+    return {"code": 200, "data": [_order_public_dict(r) for r in visible]}
 
 
 def _require_pay_sms(db: Session, user: User, sms_code: str) -> None:
@@ -1601,6 +1804,14 @@ def admin_list_users(
     }
 
 
+def _resolve_grant_days(days: int, package_id: str = "") -> tuple[int, str]:
+    pkg = get_package(package_id) if package_id else None
+    if pkg:
+        return int(pkg["days"]), str(pkg["name"])
+    d = max(1, int(days or 30))
+    return d, f"自定义 {d} 天"
+
+
 @app.post("/api/admin/vip/grant")
 def admin_grant_vip(
     req: AdminGrantVipReq,
@@ -1609,12 +1820,61 @@ def admin_grant_vip(
 ):
     require_admin_mfa(auth)
     user = _user_or_404(db, req.user_id)
-    extend_vip(user, req.days)
+    days, pkg_name = _resolve_grant_days(req.days, req.package_id)
+    extend_vip(user, days)
+    _write_admin_log(
+        db,
+        auth,
+        action="grant_vip",
+        target=user,
+        detail=f"开通/续期 VIP {days} 天（{pkg_name}）",
+    )
     db.commit()
     db.refresh(user)
-    notify_vip_opened(db, user, "管理员开通", req.days)
-    notify_admin_risk(db, auth, f"手动开通会员：用户 {user.username}，{req.days} 天")
-    return {"code": 200, "msg": f"已开通 {req.days} 天 VIP", "data": vip_status(user)}
+    notify_vip_opened(db, user, pkg_name, days)
+    notify_admin_risk(db, auth, f"手动开通会员：用户 {user.username}，{days} 天")
+    return {"code": 200, "msg": f"已开通 {days} 天 VIP", "data": vip_status(user)}
+
+
+@app.post("/api/admin/vip/grant-batch")
+def admin_grant_vip_batch(
+    req: AdminBatchGrantVipReq,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin_mfa(auth)
+    ids = sorted({int(i) for i in (req.user_ids or []) if int(i) > 0})
+    if not ids:
+        raise HTTPException(status_code=400, detail="请选择要开通的用户")
+    days, pkg_name = _resolve_grant_days(req.days, req.package_id)
+    rows = db.query(User).filter(User.id.in_(ids)).all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="未找到用户")
+    for user in rows:
+        extend_vip(user, days)
+        _write_admin_log(
+            db,
+            auth,
+            action="batch_grant_vip",
+            target=user,
+            detail=f"批量开通 VIP {days} 天（{pkg_name}）",
+        )
+        notify_vip_opened(db, user, pkg_name, days)
+    _write_admin_log(
+        db,
+        auth,
+        action="batch_grant_vip_summary",
+        detail=f"批量开通 {len(rows)} 人 VIP {days} 天（{pkg_name}）",
+    )
+    db.commit()
+    notify_admin_risk(
+        db, auth, f"批量开通会员：{len(rows)} 人，{days} 天（{pkg_name}）"
+    )
+    return {
+        "code": 200,
+        "msg": f"已为 {len(rows)} 名用户开通 {days} 天 VIP",
+        "data": {"count": len(rows), "days": days},
+    }
 
 
 @app.post("/api/admin/vip/revoke")
@@ -1626,11 +1886,111 @@ def admin_revoke_vip(
     require_admin_mfa(auth)
     user = _user_or_404(db, req.user_id)
     revoke_vip(user)
+    _write_admin_log(
+        db,
+        auth,
+        action="revoke_vip",
+        target=user,
+        detail="取消 VIP",
+    )
     db.commit()
     db.refresh(user)
     notify_user(db, user, "vip_opened", "会员状态变更：你的 VIP 已被管理员取消。")
     notify_admin_risk(db, auth, f"取消会员：用户 {user.username}")
     return {"code": 200, "msg": "已取消 VIP", "data": vip_status(user)}
+
+
+@app.get("/api/admin/users/{user_id}")
+def admin_user_detail(
+    user_id: int,
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin_mfa(auth)
+    user = _user_or_404(db, user_id)
+    orders = (
+        db.query(RechargeOrder)
+        .filter(RechargeOrder.user_id == user_id)
+        .order_by(RechargeOrder.id.desc())
+        .limit(50)
+        .all()
+    )
+    logs = (
+        db.query(AdminOpLog)
+        .filter(AdminOpLog.target_user_id == user_id)
+        .order_by(AdminOpLog.id.desc())
+        .limit(50)
+        .all()
+    )
+    return {
+        "code": 200,
+        "data": {
+            "user": {
+                "user_id": user.id,
+                "username": user.username,
+                "nickname": user.nickname or user.username,
+                "email": user.email,
+                "phone": mask_phone(user.phone),
+                "created_at": user.created_at.isoformat() if user.created_at else "",
+                **vip_status(user),
+            },
+            "orders": [
+                {
+                    "id": r.id,
+                    "out_trade_no": r.out_trade_no,
+                    "package_name": r.package_name,
+                    "amount": r.amount,
+                    "days": r.days,
+                    "status": r.status,
+                    "channel": r.channel,
+                    "remark": r.remark,
+                    "created_at": r.created_at.isoformat() if r.created_at else "",
+                }
+                for r in orders
+            ],
+            "vip_history": [
+                {
+                    "id": log.id,
+                    "action": log.action,
+                    "detail": log.detail,
+                    "admin_username": log.admin_username,
+                    "created_at": log.created_at.isoformat() if log.created_at else "",
+                }
+                for log in logs
+            ],
+        },
+    }
+
+
+@app.get("/api/admin/op-logs")
+def admin_op_logs(
+    limit: int = Query(100, ge=1, le=300),
+    db: Session = Depends(get_db),
+    auth: User = Depends(get_current_user),
+):
+    require_admin_mfa(auth)
+    rows = (
+        db.query(AdminOpLog)
+        .order_by(AdminOpLog.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return {
+        "code": 200,
+        "data": [
+            {
+                "id": r.id,
+                "admin_user_id": r.admin_user_id,
+                "admin_username": r.admin_username,
+                "action": r.action,
+                "target_user_id": r.target_user_id,
+                "target_username": r.target_username,
+                "detail": r.detail,
+                "created_at": r.created_at.isoformat() if r.created_at else "",
+            }
+            for r in rows
+        ],
+    }
 
 
 @app.post("/api/admin/users/disable")
@@ -1710,6 +2070,13 @@ def admin_approve_order(
     order.status = "paid"
     order.remark = f"管理员 {auth.username} 审核开通"
     order.channel = order.channel or "admin"
+    _write_admin_log(
+        db,
+        auth,
+        action="approve_order",
+        target=user,
+        detail=f"审核订单 #{order.id} 并开通 {order.days} 天（{order.package_name}）",
+    )
     db.commit()
     notify_vip_opened(db, user, order.package_name, order.days)
     notify_admin_risk(db, auth, f"审核订单并开通会员：订单 {order.id}，用户 {user.username}")

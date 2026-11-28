@@ -1,6 +1,7 @@
 """VIP 权益、真实充值下单、支付成功后开通、后台开通。"""
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
@@ -8,6 +9,14 @@ from sqlalchemy.orm import Session
 from database import RechargeOrder, User
 from payment_service import PaymentConfigError, build_page_pay_url, new_out_trade_no
 from wechat_pay_service import WechatPaymentConfigError, build_native_code_url
+
+# 正式环境默认隐藏 1 分钱测试套餐；本地调试可设 SHOW_VIP_TEST=1
+SHOW_VIP_TEST = (os.getenv("SHOW_VIP_TEST") or "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 VIP_FEATURE_VIDEO = "video"
 VIP_FEATURE_PPT = "pptx"
@@ -108,37 +117,58 @@ def get_package(package_id: str) -> dict | None:
     return None
 
 
+def list_public_packages() -> list[dict]:
+    """用户端可见套餐（正式环境隐藏测试套餐）。"""
+    out = []
+    for p in VIP_PACKAGES:
+        if p["id"] == "vip_test" and not SHOW_VIP_TEST:
+            continue
+        item = dict(p)
+        item["recommended"] = p["id"] == "vip_quarter"
+        out.append(item)
+    return out
+
+
 def create_vip_order(
     db: Session,
     user: User,
     package_id: str,
     *,
     channel: str = "alipay",
+    coupon_code: str = "",
 ) -> tuple[RechargeOrder, dict]:
     """创建待支付订单并返回支付参数。channel: alipay | wechat。"""
+    from coupon_service import apply_user_coupon, mark_coupon_used
+
     pkg = get_package(package_id)
     if not pkg:
         raise ValueError("套餐不存在")
+    if pkg["id"] == "vip_test" and not SHOW_VIP_TEST:
+        raise ValueError("测试套餐已下线")
 
     channel = (channel or "alipay").strip().lower()
     if channel not in ("alipay", "wechat"):
         raise ValueError("支付方式仅支持 alipay 或 wechat")
+
+    amount, coupon, coupon_row = apply_user_coupon(db, user, pkg["price"], coupon_code)
+    remark = "待支付"
+    if coupon:
+        remark = f"待支付 · 券 {coupon['code']} 减 {coupon['off']}"
 
     out_trade_no = new_out_trade_no(user.id)
     order = RechargeOrder(
         user_id=user.id,
         package_id=pkg["id"],
         package_name=pkg["name"],
-        amount=pkg["price"],
+        amount=amount,
         days=pkg["days"],
         status="pending",
         channel=channel,
-        remark="待支付",
+        remark=remark,
         out_trade_no=out_trade_no,
     )
     db.add(order)
-    db.commit()
-    db.refresh(order)
+    db.flush()
 
     subject = f"Apex AI {pkg['name']}"
     try:
@@ -146,14 +176,14 @@ def create_vip_order(
             code_url = build_native_code_url(
                 out_trade_no=out_trade_no,
                 description=subject,
-                total_amount=pkg["price"],
+                total_amount=amount,
             )
             pay = {"channel": "wechat", "code_url": code_url, "pay_url": ""}
         else:
             pay_url = build_page_pay_url(
                 out_trade_no=out_trade_no,
                 subject=subject,
-                total_amount=pkg["price"],
+                total_amount=amount,
             )
             pay = {"channel": "alipay", "pay_url": pay_url, "code_url": ""}
     except (PaymentConfigError, WechatPaymentConfigError):
@@ -162,6 +192,14 @@ def create_vip_order(
         db.commit()
         raise
 
+    if coupon_row is not None:
+        mark_coupon_used(db, coupon_row, order.id)
+    db.commit()
+    db.refresh(order)
+
+    pay["amount"] = amount
+    pay["original_amount"] = pkg["price"]
+    pay["coupon"] = coupon
     return order, pay
 
 
